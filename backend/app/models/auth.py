@@ -1,18 +1,12 @@
-import uuid
 import enum
 from datetime import datetime
 
-from sqlalchemy import (
-    Column, String, DateTime, ForeignKey, Enum as SAEnum, Boolean
-)
+from sqlalchemy import Column, String, DateTime, ForeignKey, Enum as SAEnum, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from app.database import Base
-
-
-def gen_uuid():
-    return str(uuid.uuid4())
+from app.models.base import gen_uuid
 
 
 class UserRole(str, enum.Enum):
@@ -79,6 +73,7 @@ class AuditLog(Base):
     company_id = Column(UUID(as_uuid=False), ForeignKey("companies.id", ondelete="SET NULL"), nullable=True, index=True)
     user_id = Column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     action = Column(String(100), nullable=False)
+    entity_name = Column(String(255), nullable=True)
     ip_address = Column(String(64), nullable=True)
     browser = Column(String(255), nullable=True)
     timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)

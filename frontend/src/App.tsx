@@ -8,6 +8,8 @@ import Login from "./pages/Login";
 import ForgotPassword from "./pages/ForgotPassword";
 import Dashboard from "./pages/Dashboard";
 import Profile from "./pages/Profile";
+import Categories from "./pages/Categories";
+import Products from "./pages/Products";
 
 const queryClient = new QueryClient();
 
@@ -24,6 +26,11 @@ export default function App() {
             <Route element={<ProtectedRoute />}>
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/profile" element={<Profile />} />
+            </Route>
+
+            <Route element={<ProtectedRoute allowedRoles={["COMPANY_ADMIN", "SUPER_ADMIN"]} />}>
+              <Route path="/categories" element={<Categories />} />
+              <Route path="/products" element={<Products />} />
             </Route>
 
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
