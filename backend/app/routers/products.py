@@ -6,13 +6,14 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.models import Product, Category, User, UserRole, ProductStatus
-from app.schemas import ProductCreate, ProductUpdate, ProductOut, ProductListResponse
+from app.schemas import ProductCreate, ProductUpdate, ProductOut, ProductListResponse, ProductOptionOut
 from app.dependencies import require_roles, get_current_company_id
 from app.audit import log_action
 
 router = APIRouter(prefix="/products", tags=["products"])
 
 ADMIN_ONLY = [UserRole.COMPANY_ADMIN, UserRole.SUPER_ADMIN]
+SALES_ROLES = [UserRole.COMPANY_ADMIN, UserRole.SUPER_ADMIN, UserRole.ANALYST]
 
 SORT_FIELDS = {
     "name": Product.name,
@@ -113,6 +114,7 @@ def create_product(
         stock_quantity=payload.stock_quantity,
         unit_of_measure=payload.unit_of_measure,
         status=payload.status,
+        low_stock_threshold=payload.low_stock_threshold,
     )
     db.add(product)
     db.commit()
@@ -122,6 +124,31 @@ def create_product(
                user_id=current_user.id, entity_name=product.name)
 
     return product
+
+
+@router.get("/sales-options", response_model=list[ProductOptionOut])
+def list_product_options_for_sale(
+    search: Optional[str] = None,
+    db: Session = Depends(get_db),
+    company_id: str = Depends(get_current_company_id),
+    current_user: User = Depends(require_roles(SALES_ROLES)),
+):
+    """
+    Lightweight, active-only product list for the sales-entry product
+    picker. Available to Analysts as well as Admins, unlike the full
+    product management endpoints above. Inactive products are excluded
+    per Task 2's requirement that they not be selectable for future
+    transactions.
+    """
+    query = db.query(Product).options(joinedload(Product.category)).filter(
+        Product.company_id == company_id,
+        Product.status == ProductStatus.ACTIVE,
+    )
+    if search:
+        like = f"%{search}%"
+        query = query.filter(or_(Product.name.ilike(like), Product.sku.ilike(like)))
+
+    return query.order_by(Product.name.asc()).limit(50).all()
 
 
 @router.get("/{product_id}", response_model=ProductOut)

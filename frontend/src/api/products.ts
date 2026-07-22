@@ -1,5 +1,12 @@
 import { apiClient } from "./client";
-import type { Product, ProductPayload, ProductListResponse, ProductListParams, ProductStatus } from "../types";
+import type { Product, ProductPayload, ProductListResponse, ProductListParams, ProductStatus, ProductOption } from "../types";
+
+export const listProductOptions = async (search?: string) => {
+  const { data } = await apiClient.get<ProductOption[]>("/products/sales-options", {
+    params: search ? { search } : undefined,
+  });
+  return data;
+};
 
 export const listProducts = async (params: ProductListParams) => {
   const { data } = await apiClient.get<ProductListResponse>("/products", { params });

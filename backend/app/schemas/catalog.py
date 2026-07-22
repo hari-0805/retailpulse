@@ -101,7 +101,19 @@ class ProductOut(BaseModel):
     class Config:
         from_attributes = True
 
+class ProductOptionOut(BaseModel):
+    """Lightweight product shape for the sales-entry product picker."""
+    id: str
+    name: str
+    sku: str
+    unit_price: Decimal
+    stock_quantity: int
+    unit_of_measure: str
+    category: ProductCategoryOut
 
+    class Config:
+        from_attributes = True
+        
 class ProductListResponse(BaseModel):
     items: list[ProductOut]
     total: int
