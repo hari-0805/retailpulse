@@ -120,6 +120,19 @@ def create_product(
     db.commit()
     db.refresh(product)
 
+    # Initialize inventory record for the new product
+    from app.models.inventory import Inventory
+    inv = Inventory(
+        company_id=company_id,
+        product_id=product.id,
+        current_stock=product.stock_quantity,
+        reserved_stock=0,
+        reorder_level=product.low_stock_threshold,
+    )
+    inv.update_status()
+    db.add(inv)
+    db.commit()
+
     log_action(db, request, "Product Created", company_id=company_id,
                user_id=current_user.id, entity_name=product.name)
 

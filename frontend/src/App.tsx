@@ -11,6 +11,7 @@ import Profile from "./pages/Profile";
 import Categories from "./pages/Categories";
 import Products from "./pages/Products";
 import Sales from "./pages/Sales";
+import Inventory from "./pages/Inventory";
 
 const queryClient = new QueryClient();
 
@@ -36,6 +37,7 @@ export default function App() {
 
             <Route element={<ProtectedRoute allowedRoles={["COMPANY_ADMIN", "SUPER_ADMIN", "ANALYST"]} />}>
               <Route path="/sales" element={<Sales />} />
+              <Route path="/inventory" element={<Inventory />} />
             </Route>
 
             <Route path="/" element={<Navigate to="/dashboard" replace />} />

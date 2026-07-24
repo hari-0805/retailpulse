@@ -10,8 +10,9 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.models import (
     Sale, SaleItem, Product, ProductStatus, User, UserRole,
-    SalesChannel, PaymentMethod,
+    SalesChannel, PaymentMethod, Notification, NotificationType,
 )
+from app.models.inventory import Inventory, InventoryMovement, MovementType
 from app.schemas import (
     SaleCreate, SaleUpdate, SaleOut, SaleListResponse, SalesDashboardSummary,
 )
@@ -50,6 +51,73 @@ def _generate_invoice_number(db: Session, company_id: str) -> str:
             return candidate
 
     raise HTTPException(status_code=500, detail="Could not generate a unique invoice number, please retry")
+
+
+def record_sale_stock_movement(db: Session, product_id: str, company_id: str, quantity_changed: int, invoice_number: str, performed_by_id: str):
+    inventory = db.query(Inventory).filter(
+        Inventory.product_id == product_id,
+        Inventory.company_id == company_id
+    ).first()
+    
+    if not inventory:
+        product = db.query(Product).filter(Product.id == product_id).first()
+        if not product:
+            return
+        inventory = Inventory(
+            company_id=company_id,
+            product_id=product_id,
+            current_stock=product.stock_quantity + (-quantity_changed),
+            reserved_stock=0,
+            reorder_level=product.low_stock_threshold,
+        )
+        db.add(inventory)
+        db.flush()
+        
+    previous_qty = inventory.current_stock
+    new_qty = previous_qty + quantity_changed
+    if new_qty < 0:
+        new_qty = 0
+        
+    inventory.current_stock = new_qty
+    old_status = inventory.stock_status
+    inventory.update_status()
+    db.add(inventory)
+    
+    if quantity_changed < 0:
+        reason = f"Deducted {abs(quantity_changed)} units for Sale (Invoice: {invoice_number})"
+        mov_type = MovementType.SALE
+    else:
+        reason = f"Reverted {quantity_changed} units for Sale change/deletion (Invoice: {invoice_number})"
+        mov_type = MovementType.SALE
+
+    movement = InventoryMovement(
+        inventory_id=inventory.id,
+        movement_type=mov_type,
+        quantity_changed=quantity_changed,
+        previous_quantity=previous_qty,
+        updated_quantity=new_qty,
+        reason=reason,
+        performed_by=performed_by_id
+    )
+    db.add(movement)
+    
+    if old_status != inventory.stock_status:
+        product = db.query(Product).filter(Product.id == product_id).first()
+        if product:
+            if inventory.stock_status == "Out of Stock":
+                db.add(Notification(
+                    company_id=company_id,
+                    product_id=product.id,
+                    type=NotificationType.OUT_OF_STOCK,
+                    message=f"{product.name} ({product.sku}) is now out of stock.",
+                ))
+            elif inventory.stock_status == "Low Stock" and old_status == "In Stock":
+                db.add(Notification(
+                    company_id=company_id,
+                    product_id=product.id,
+                    type=NotificationType.LOW_STOCK,
+                    message=f"{product.name} ({product.sku}) is low on stock: {inventory.available_stock} {product.unit_of_measure} remaining.",
+                ))
 
 
 def _build_items(db: Session, company_id: str, items_payload, products_cache: dict):
@@ -216,6 +284,7 @@ def create_sale(
         for item in sale_items:
             item.sale_id = sale.id
             db.add(item)
+            record_sale_stock_movement(db, item.product_id, company_id, -item.quantity, invoice_number, current_user.id)
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -306,6 +375,7 @@ def update_sale(
             if product:
                 product.stock_quantity += old_item.quantity
                 products_cache[product.id] = product
+                record_sale_stock_movement(db, old_item.product_id, company_id, old_item.quantity, sale.invoice_number, current_user.id)
 
         for old_item in list(sale.items):
             db.delete(old_item)
@@ -315,6 +385,7 @@ def update_sale(
         for item in new_items:
             item.sale_id = sale.id
             db.add(item)
+            record_sale_stock_movement(db, item.product_id, company_id, -item.quantity, sale.invoice_number, current_user.id)
         sale.total_amount = total_amount
 
         log_action(db, request, "Inventory Updated", company_id=company_id,
@@ -365,6 +436,7 @@ def delete_sale(
         if product:
             product.stock_quantity += item.quantity
             products_cache[product.id] = product
+            record_sale_stock_movement(db, item.product_id, company_id, item.quantity, invoice_number, current_user.id)
 
     invoice_number = sale.invoice_number
     db.delete(sale)

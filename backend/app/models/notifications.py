@@ -12,6 +12,7 @@ from app.models.base import gen_uuid
 class NotificationType(str, enum.Enum):
     LOW_STOCK = "LOW_STOCK"
     OUT_OF_STOCK = "OUT_OF_STOCK"
+    MANUAL_ADJUSTMENT = "MANUAL_ADJUSTMENT"
 
 
 class Notification(Base):

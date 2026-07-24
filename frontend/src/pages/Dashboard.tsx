@@ -142,6 +142,7 @@ export default function Dashboard() {
       {isSalesUser && (
         <div className="flex flex-wrap gap-3">
           <Link to="/sales" className="btn-primary">Manage Sales</Link>
+          <Link to="/inventory" className="btn-outline">Manage Inventory</Link>
           {isAdmin && <Link to="/products" className="btn-outline">Manage Products</Link>}
           {isAdmin && <Link to="/categories" className="btn-outline">Manage Categories</Link>}
         </div>

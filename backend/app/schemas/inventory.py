@@ -1,45 +1,119 @@
-from fastapi import Request
-from sqlalchemy.orm import Session
+from datetime import datetime
+from typing import List, Optional
 
-from app.models import Product, Notification, NotificationType
-from app.audit import log_action
+from pydantic import BaseModel, Field, model_validator
+
+from app.models import (
+    StockStatus, AdjustmentType, AdjustmentDirection, MovementType, NotificationType,
+)
 
 
-def check_stock_alerts(
-    db: Session,
-    request: Request,
-    product: Product,
-    company_id: str,
-    user_id: str,
-):
-    """
-    Call this after any stock_quantity change on a product (sale created,
-    sale updated, sale deleted/reverted). Creates a notification and audit
-    entry when the product crosses into low-stock or out-of-stock, and
-    clears the out-of-stock flag if stock is replenished above zero.
-    """
-    if product.stock_quantity <= 0:
-        if not product.is_out_of_stock:
-            product.is_out_of_stock = True
-            db.add(Notification(
-                company_id=company_id,
-                product_id=product.id,
-                type=NotificationType.OUT_OF_STOCK,
-                message=f"{product.name} ({product.sku}) is now out of stock.",
-            ))
-            log_action(db, request, "Product Marked Out of Stock", company_id=company_id,
-                       user_id=user_id, entity_name=product.name)
-    else:
-        if product.is_out_of_stock:
-            product.is_out_of_stock = False
+# ---------- Inventory ----------
 
-        if product.stock_quantity <= product.low_stock_threshold:
-            db.add(Notification(
-                company_id=company_id,
-                product_id=product.id,
-                type=NotificationType.LOW_STOCK,
-                message=f"{product.name} ({product.sku}) is low on stock: "
-                        f"{product.stock_quantity} {product.unit_of_measure} remaining.",
-            ))
+class InventoryProductOut(BaseModel):
+    id: str
+    name: str
+    sku: str
+    brand: Optional[str] = None
+    unit_of_measure: str
+    category_id: str
+    category_name: str
 
-    db.commit()
+
+class InventoryOut(BaseModel):
+    id: str
+    product: InventoryProductOut
+    current_stock: int
+    reserved_stock: int
+    available_stock: int
+    reorder_level: int
+    stock_status: StockStatus
+    updated_at: datetime
+
+
+class InventoryListResponse(BaseModel):
+    items: List[InventoryOut]
+    total: int
+
+
+class ReorderLevelUpdate(BaseModel):
+    reorder_level: int = Field(..., ge=0)
+
+
+# ---------- Stock Adjustments / Movements ----------
+
+class StockAdjustmentCreate(BaseModel):
+    adjustment_type: AdjustmentType
+    direction: Optional[AdjustmentDirection] = None
+    quantity: int = Field(..., gt=0)
+    reason: str = Field(..., min_length=1, max_length=255)
+    remarks: Optional[str] = Field(None, max_length=1000)
+
+    @model_validator(mode="after")
+    def direction_required_for_manual(self):
+        if self.adjustment_type == AdjustmentType.MANUAL_ADJUSTMENT and self.direction is None:
+            raise ValueError("Direction (INCREASE or DECREASE) is required for a manual adjustment")
+        return self
+
+
+class MovementPerformerOut(BaseModel):
+    id: str
+    name: str
+
+
+class MovementOut(BaseModel):
+    id: str
+    movement_type: MovementType
+    quantity_changed: int
+    previous_quantity: int
+    updated_quantity: int
+    reason: str
+    remarks: Optional[str] = None
+    performed_by: Optional[MovementPerformerOut] = None
+    created_at: datetime
+
+
+class MovementListResponse(BaseModel):
+    items: List[MovementOut]
+    total: int
+
+
+# ---------- Dashboard ----------
+
+class CategoryBreakdown(BaseModel):
+    category: str
+    quantity: int
+
+
+class StatusBreakdown(BaseModel):
+    status: StockStatus
+    count: int
+
+
+class InventoryDashboardSummary(BaseModel):
+    total_products: int
+    total_quantity: int
+    low_stock_count: int
+    out_of_stock_count: int
+    by_category: List[CategoryBreakdown]
+    by_status: List[StatusBreakdown]
+
+
+# ---------- Notifications ----------
+
+class NotificationOut(BaseModel):
+    id: str
+    type: NotificationType
+    message: str
+    is_read: bool
+    created_at: datetime
+    product_id: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class NotificationListResponse(BaseModel):
+    items: List[NotificationOut]
+    total: int
+    unread_count: int
