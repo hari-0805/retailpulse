@@ -74,6 +74,7 @@ class AuditLog(Base):
     user_id = Column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     action = Column(String(100), nullable=False)
     entity_name = Column(String(255), nullable=True)
+    details = Column(String(500), nullable=True)
     ip_address = Column(String(64), nullable=True)
     browser = Column(String(255), nullable=True)
     timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)

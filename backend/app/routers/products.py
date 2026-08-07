@@ -114,7 +114,6 @@ def create_product(
         stock_quantity=payload.stock_quantity,
         unit_of_measure=payload.unit_of_measure,
         status=payload.status,
-        low_stock_threshold=payload.low_stock_threshold,
     )
     db.add(product)
     db.commit()
@@ -122,12 +121,13 @@ def create_product(
 
     # Initialize inventory record for the new product
     from app.models.inventory import Inventory
+    from app.services.inventory_utils import DEFAULT_REORDER_LEVEL
     inv = Inventory(
         company_id=company_id,
         product_id=product.id,
         current_stock=product.stock_quantity,
         reserved_stock=0,
-        reorder_level=product.low_stock_threshold,
+        reorder_level=DEFAULT_REORDER_LEVEL,
     )
     inv.update_status()
     db.add(inv)

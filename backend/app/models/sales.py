@@ -32,6 +32,9 @@ class Sale(Base):
     company_id = Column(UUID(as_uuid=False), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
     invoice_number = Column(String(50), nullable=False, index=True)
     customer_name = Column(String(255), nullable=False)
+    # Task 6: optional link to a Customer record. customer_name above is kept
+    # as a point-in-time snapshot for display even when this is set/unset later.
+    customer_id = Column(UUID(as_uuid=False), ForeignKey("customers.id", ondelete="SET NULL"), nullable=True, index=True)
     sale_date = Column(DateTime, nullable=False, default=datetime.utcnow)
     sales_channel = Column(SAEnum(SalesChannel), nullable=False)
     payment_method = Column(SAEnum(PaymentMethod), nullable=False)

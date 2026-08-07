@@ -5,8 +5,9 @@ import {
 } from "../api/sales";
 import { listProductOptions } from "../api/products";
 import { listCategories } from "../api/categories";
+import { searchCustomerOptions } from "../api/customers";
 import type {
-  Sale, SaleListItem, SalePayload, ProductOption, Category, SalesChannel, PaymentMethod,
+  Sale, SaleListItem, SalePayload, ProductOption, Category, SalesChannel, PaymentMethod, CustomerListItem,
 } from "../types";
 import Modal from "../components/Modal";
 
@@ -382,6 +383,9 @@ function SaleFormModal({
   const [serverError, setServerError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [products, setProducts] = useState<ProductOption[]>([]);
+  const [customerId, setCustomerId] = useState<string | null>(sale?.customer_id ?? null);
+  const [customerOptions, setCustomerOptions] = useState<CustomerListItem[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
   useEffect(() => {
     listProductOptions().then(setProducts).catch(() => setProducts([]));
@@ -448,6 +452,8 @@ function SaleFormModal({
     setIsSubmitting(true);
     const payload: SalePayload = {
       customer_name: data.customer_name,
+      customer_id: customerId ?? undefined,
+      clear_customer: isEdit && !!sale?.customer_id && !customerId,
       sale_date: data.sale_date ? new Date(data.sale_date).toISOString() : undefined,
       sales_channel: data.sales_channel,
       payment_method: data.payment_method,
@@ -483,13 +489,52 @@ function SaleFormModal({
       )}
       <form onSubmit={handleSubmit(onSubmit)} noValidate>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div>
+          <div className="relative">
             <label className="form-label">Customer Name</label>
             <input
               className={`form-input ${errors.customer_name ? "input-error" : ""}`}
-              {...register("customer_name", { required: "Customer name is required" })}
+              autoComplete="off"
+              {...register("customer_name", {
+                required: "Customer name is required",
+                onChange: (e) => {
+                  setCustomerId(null);
+                  setShowSuggestions(true);
+                  const query = e.target.value.trim();
+                  if (query.length < 2) { setCustomerOptions([]); return; }
+                  searchCustomerOptions(query).then((res) => setCustomerOptions(res.items)).catch(() => setCustomerOptions([]));
+                },
+              })}
+              onFocus={() => setShowSuggestions(true)}
+              onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
             />
             {errors.customer_name && <span className="form-error-text">{errors.customer_name.message}</span>}
+            {customerId ? (
+              <p className="mt-1 text-xs text-emerald-600">
+                Linked to existing customer record.{" "}
+                <button type="button" className="underline" onClick={() => setCustomerId(null)}>Unlink</button>
+              </p>
+            ) : (
+              <p className="mt-1 text-xs text-slate-400">Type 2+ characters to match an existing customer, or leave unlinked for a one-off sale.</p>
+            )}
+            {showSuggestions && customerOptions.length > 0 && (
+              <ul className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-md border border-slate-200 bg-white shadow-lg">
+                {customerOptions.map((opt) => (
+                  <li
+                    key={opt.id}
+                    className="cursor-pointer px-3 py-2 text-sm hover:bg-slate-50"
+                    onMouseDown={() => {
+                      setValue("customer_name", opt.full_name);
+                      setCustomerId(opt.id);
+                      setCustomerOptions([]);
+                      setShowSuggestions(false);
+                    }}
+                  >
+                    <span className="font-medium text-slate-800">{opt.full_name}</span>{" "}
+                    <span className="text-xs text-slate-400">{opt.customer_code} · {opt.email}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
           <div>
             <label className="form-label">Sale Date &amp; Time</label>

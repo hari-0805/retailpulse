@@ -14,6 +14,13 @@ from app.models.inventory import (
     StockStatus, AdjustmentType, AdjustmentDirection, MovementType,
     Inventory, InventoryMovement,
 )
+from app.models.customers import (
+    CustomerType, CustomerStatus, CustomerGender, CustomerSegment, CustomerActivityType,
+    Customer, CustomerPurchaseSummary, CustomerActivity,
+)
+from app.models.forecasting import (
+    ForecastPeriod, RecommendationType, DemandForecast, ForecastHistory,
+)
 
 __all__ = [
     "UserRole", "UserStatus", "Company", "User", "RefreshToken", "AuditLog",
@@ -21,4 +28,7 @@ __all__ = [
     "SalesChannel", "PaymentMethod", "Sale", "SaleItem",
     "NotificationType", "Notification", "StockStatus", "AdjustmentType", "AdjustmentDirection",
     "MovementType", "Inventory", "InventoryMovement",
+    "CustomerType", "CustomerStatus", "CustomerGender", "CustomerSegment", "CustomerActivityType",
+    "Customer", "CustomerPurchaseSummary", "CustomerActivity",
+    "ForecastPeriod", "RecommendationType", "DemandForecast", "ForecastHistory",
 ]

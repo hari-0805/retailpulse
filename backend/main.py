@@ -2,12 +2,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
-from app.database import Base, engine
+from app.database import Base, engine, SessionLocal
 from app.config import settings
-from app.routers import auth, categories, products, dashboard, sales, notifications, inventory
+from app.routers import auth, categories, products, dashboard, sales, notifications, inventory, analytics, customers, forecasting
 
-# Creates tables that don't exist yet (including `sales`, `sale_items`, and
-# `notifications`, new in Task 3). It will NOT alter tables that already
+# Creates tables that don't exist yet (including `sales`, `sale_items`,
+# `notifications` from Task 3, and `customers`, `customer_purchase_summary`,
+# `customer_activities` from Task 6). It will NOT alter tables that already
 # exist — for those, run the guarded ALTER TABLE statements below.
 Base.metadata.create_all(bind=engine)
 
@@ -18,6 +19,9 @@ Base.metadata.create_all(bind=engine)
 with engine.connect() as conn:
     conn.execute(text(
         "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS entity_name VARCHAR(255)"
+    ))
+    conn.execute(text(
+        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS details VARCHAR(500)"
     ))
     conn.execute(text(
         "ALTER TABLE products ADD COLUMN IF NOT EXISTS low_stock_threshold INTEGER NOT NULL DEFAULT 10"
@@ -33,28 +37,61 @@ with engine.connect() as conn:
     except Exception:
         pass
     conn.commit()
-# with SessionLocal() as db:
-#     from app.models import Product, Inventory
-#     from app.services.inventory_utils import compute_stock_status
 
-#     DEFAULT_REORDER_LEVEL = 10
-#     missing = db.query(Product).outerjoin(
-#         Inventory, Inventory.product_id == Product.id
-#     ).filter(Inventory.id.is_(None)).all()
+    # Task 6: customer_id links on the already-existing `sales` and
+    # `notifications` tables, plus the new customer-related notification
+    # types. The `customers` table itself is brand new and was already
+    # created by create_all() above, so this FK is safe to add here.
+    conn.execute(text(
+        "ALTER TABLE sales ADD COLUMN IF NOT EXISTS customer_id UUID REFERENCES customers(id) ON DELETE SET NULL"
+    ))
+    conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_sales_customer_id ON sales (customer_id)"
+    ))
+    conn.execute(text(
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS customer_id UUID REFERENCES customers(id) ON DELETE CASCADE"
+    ))
+    conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_notifications_customer_id ON notifications (customer_id)"
+    ))
+    for new_value in ["CUSTOMER_REGISTERED", "CUSTOMER_VIP", "CUSTOMER_INACTIVE", "CUSTOMER_FIRST_PURCHASE"]:
+        try:
+            conn.execute(text(f"ALTER TYPE notificationtype ADD VALUE IF NOT EXISTS '{new_value}'"))
+        except Exception:
+            pass
+    conn.commit()
 
-#     for product in missing:
-#         stock = product.stock_quantity or 0
-#         db.add(Inventory(
-#             company_id=product.company_id,
-#             product_id=product.id,
-#             current_stock=stock,
-#             reserved_stock=0,
-#             available_stock=stock,
-#             reorder_level=DEFAULT_REORDER_LEVEL,
-#             stock_status=compute_stock_status(stock, DEFAULT_REORDER_LEVEL),
-#         ))
-#     if missing:
-#         db.commit()
+    # Task 7: forecasting notification types. `demand_forecasts` and
+    # `forecast_history` are brand-new tables already created by
+    # create_all() above, so no ALTER TABLE is needed for them.
+    for new_value in ["FORECAST_STOCK_RUNOUT", "FORECAST_DEMAND_EXCEEDS_STOCK", "FORECAST_DEMAND_GROWTH"]:
+        try:
+            conn.execute(text(f"ALTER TYPE notificationtype ADD VALUE IF NOT EXISTS '{new_value}'"))
+        except Exception:
+            pass
+    conn.commit()
+with SessionLocal() as db:
+    from app.models import Product, Inventory
+    from app.services.inventory_utils import compute_stock_status
+
+    DEFAULT_REORDER_LEVEL = 10
+    missing = db.query(Product).outerjoin(
+        Inventory, Inventory.product_id == Product.id
+    ).filter(Inventory.id.is_(None)).all()
+
+    for product in missing:
+        stock = product.stock_quantity or 0
+        db.add(Inventory(
+            company_id=product.company_id,
+            product_id=product.id,
+            current_stock=stock,
+            reserved_stock=0,
+            available_stock=stock,
+            reorder_level=DEFAULT_REORDER_LEVEL,
+            stock_status=compute_stock_status(stock, DEFAULT_REORDER_LEVEL),
+        ))
+    if missing:
+        db.commit()
 
 app = FastAPI(
     title="RetailPulse Analytics API",
@@ -77,6 +114,9 @@ app.include_router(dashboard.router)
 app.include_router(sales.router)
 app.include_router(notifications.router)
 app.include_router(inventory.router)
+app.include_router(analytics.router)
+app.include_router(customers.router)
+app.include_router(forecasting.router)
 
 
 @app.get("/health")

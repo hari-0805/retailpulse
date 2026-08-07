@@ -13,6 +13,13 @@ class NotificationType(str, enum.Enum):
     LOW_STOCK = "LOW_STOCK"
     OUT_OF_STOCK = "OUT_OF_STOCK"
     MANUAL_ADJUSTMENT = "MANUAL_ADJUSTMENT"
+    CUSTOMER_REGISTERED = "CUSTOMER_REGISTERED"
+    CUSTOMER_VIP = "CUSTOMER_VIP"
+    CUSTOMER_INACTIVE = "CUSTOMER_INACTIVE"
+    CUSTOMER_FIRST_PURCHASE = "CUSTOMER_FIRST_PURCHASE"
+    FORECAST_STOCK_RUNOUT = "FORECAST_STOCK_RUNOUT"
+    FORECAST_DEMAND_EXCEEDS_STOCK = "FORECAST_DEMAND_EXCEEDS_STOCK"
+    FORECAST_DEMAND_GROWTH = "FORECAST_DEMAND_GROWTH"
 
 
 class Notification(Base):
@@ -21,9 +28,11 @@ class Notification(Base):
     id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
     company_id = Column(UUID(as_uuid=False), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=True, index=True)
+    customer_id = Column(UUID(as_uuid=False), ForeignKey("customers.id", ondelete="CASCADE"), nullable=True, index=True)
     type = Column(SAEnum(NotificationType), nullable=False)
     message = Column(String(500), nullable=False)
     is_read = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     product = relationship("Product")
+    customer = relationship("Customer")

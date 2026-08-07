@@ -20,12 +20,14 @@ def log_action(
     company_id: Optional[str] = None,
     user_id: Optional[str] = None,
     entity_name: Optional[str] = None,
+    details: Optional[str] = None,
 ):
     entry = AuditLog(
         company_id=company_id,
         user_id=user_id,
         action=action,
         entity_name=entity_name,
+        details=details,
         ip_address=get_client_ip(request),
         browser=request.headers.get("user-agent", "unknown"),
     )

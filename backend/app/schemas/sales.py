@@ -53,6 +53,9 @@ class SaleItemOut(BaseModel):
 
 class SaleCreate(BaseModel):
     customer_name: str = Field(..., min_length=1, max_length=255)
+    # Task 6: optional link to a Customer record. When provided, purchase
+    # history/segmentation for that customer is recalculated automatically.
+    customer_id: Optional[str] = None
     sale_date: Optional[datetime] = None
     sales_channel: SalesChannel
     payment_method: PaymentMethod
@@ -61,6 +64,8 @@ class SaleCreate(BaseModel):
 
 class SaleUpdate(BaseModel):
     customer_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    customer_id: Optional[str] = None
+    clear_customer: bool = False  # explicit flag to unlink, since customer_id=None means "leave unchanged"
     sale_date: Optional[datetime] = None
     sales_channel: Optional[SalesChannel] = None
     payment_method: Optional[PaymentMethod] = None
@@ -79,6 +84,7 @@ class SaleOut(BaseModel):
     id: str
     invoice_number: str
     customer_name: str
+    customer_id: Optional[str] = None
     sale_date: datetime
     sales_channel: SalesChannel
     payment_method: PaymentMethod
@@ -96,6 +102,7 @@ class SaleListItem(BaseModel):
     id: str
     invoice_number: str
     customer_name: str
+    customer_id: Optional[str] = None
     sale_date: datetime
     sales_channel: SalesChannel
     payment_method: PaymentMethod

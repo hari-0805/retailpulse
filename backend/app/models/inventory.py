@@ -63,6 +63,21 @@ class Inventory(Base):
         UniqueConstraint("company_id", "product_id", name="uq_inventory_company_product"),
     )
 
+    def update_status(self) -> None:
+        """
+        Recompute available_stock and stock_status from current_stock,
+        reserved_stock, and reorder_level. Call this any time one of those
+        three inputs changes (product creation, sale processing, manual
+        adjustment, reorder-level edit) so the two never drift apart.
+        """
+        self.available_stock = max(0, self.current_stock - self.reserved_stock)
+        if self.available_stock <= 0:
+            self.stock_status = StockStatus.OUT_OF_STOCK
+        elif self.available_stock <= self.reorder_level:
+            self.stock_status = StockStatus.LOW_STOCK
+        else:
+            self.stock_status = StockStatus.IN_STOCK
+
 
 class InventoryMovement(Base):
     __tablename__ = "inventory_movements"

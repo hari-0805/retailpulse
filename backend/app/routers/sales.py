@@ -10,15 +10,15 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.models import (
     Sale, SaleItem, Product, ProductStatus, User, UserRole,
-    SalesChannel, PaymentMethod, Notification, NotificationType,
+    SalesChannel, PaymentMethod, Notification, NotificationType, Customer,
 )
-from app.models.inventory import Inventory, InventoryMovement, MovementType
+from app.models.inventory import Inventory, InventoryMovement, MovementType, StockStatus
 from app.schemas import (
     SaleCreate, SaleUpdate, SaleOut, SaleListResponse, SalesDashboardSummary,
 )
 from app.dependencies import require_roles, get_current_company_id
 from app.audit import log_action
-from app.inventory import check_stock_alerts
+from app.services.customers import recalculate_purchase_summary
 
 router = APIRouter(prefix="/sales", tags=["sales"])
 
@@ -63,12 +63,13 @@ def record_sale_stock_movement(db: Session, product_id: str, company_id: str, qu
         product = db.query(Product).filter(Product.id == product_id).first()
         if not product:
             return
+        from app.services.inventory_utils import DEFAULT_REORDER_LEVEL
         inventory = Inventory(
             company_id=company_id,
             product_id=product_id,
             current_stock=product.stock_quantity + (-quantity_changed),
             reserved_stock=0,
-            reorder_level=product.low_stock_threshold,
+            reorder_level=DEFAULT_REORDER_LEVEL,
         )
         db.add(inventory)
         db.flush()
@@ -104,14 +105,14 @@ def record_sale_stock_movement(db: Session, product_id: str, company_id: str, qu
     if old_status != inventory.stock_status:
         product = db.query(Product).filter(Product.id == product_id).first()
         if product:
-            if inventory.stock_status == "Out of Stock":
+            if inventory.stock_status == StockStatus.OUT_OF_STOCK:
                 db.add(Notification(
                     company_id=company_id,
                     product_id=product.id,
                     type=NotificationType.OUT_OF_STOCK,
                     message=f"{product.name} ({product.sku}) is now out of stock.",
                 ))
-            elif inventory.stock_status == "Low Stock" and old_status == "In Stock":
+            elif inventory.stock_status == StockStatus.LOW_STOCK and old_status == StockStatus.IN_STOCK:
                 db.add(Notification(
                     company_id=company_id,
                     product_id=product.id,
@@ -189,6 +190,7 @@ def _serialize_list_item(sale: Sale) -> dict:
         "id": sale.id,
         "invoice_number": sale.invoice_number,
         "customer_name": sale.customer_name,
+        "customer_id": sale.customer_id,
         "sale_date": sale.sale_date,
         "sales_channel": sale.sales_channel,
         "payment_method": sale.payment_method,
@@ -203,6 +205,8 @@ def list_sales(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     category_id: Optional[str] = None,
+    product_id: Optional[str] = None,
+    brand: Optional[str] = None,
     sales_channel: Optional[SalesChannel] = None,
     payment_method: Optional[PaymentMethod] = None,
     sort_by: str = Query("date", pattern="^(date|invoice|total)$"),
@@ -231,6 +235,18 @@ def list_sales(
         matching_sale_ids = db.query(SaleItem.sale_id).filter(
             SaleItem.category_id == category_id
         ).subquery()
+        query = query.filter(Sale.id.in_(db.query(matching_sale_ids.c.sale_id)))
+
+    if product_id:
+        matching_sale_ids = db.query(SaleItem.sale_id).filter(
+            SaleItem.product_id == product_id
+        ).subquery()
+        query = query.filter(Sale.id.in_(db.query(matching_sale_ids.c.sale_id)))
+
+    if brand:
+        matching_sale_ids = db.query(SaleItem.sale_id).join(
+            Product, SaleItem.product_id == Product.id
+        ).filter(Product.brand == brand).subquery()
         query = query.filter(Sale.id.in_(db.query(matching_sale_ids.c.sale_id)))
 
     if date_from:
@@ -267,10 +283,21 @@ def create_sale(
 
     invoice_number = _generate_invoice_number(db, company_id)
 
+    customer = None
+    customer_name = payload.customer_name
+    if payload.customer_id:
+        customer = db.query(Customer).filter(
+            Customer.id == payload.customer_id, Customer.company_id == company_id
+        ).first()
+        if not customer:
+            raise HTTPException(status_code=400, detail="Customer not found")
+        customer_name = customer.full_name  # keep the snapshot in sync with the linked record
+
     sale = Sale(
         company_id=company_id,
         invoice_number=invoice_number,
-        customer_name=payload.customer_name,
+        customer_name=customer_name,
+        customer_id=customer.id if customer else None,
         sale_date=payload.sale_date or datetime.utcnow(),
         sales_channel=payload.sales_channel,
         payment_method=payload.payment_method,
@@ -292,12 +319,13 @@ def create_sale(
 
     db.refresh(sale)
 
+    if customer:
+        recalculate_purchase_summary(db, customer.id)
+
     product_names = [p.name for p in products_cache.values()]
     log_action(db, request, "Sale Created", company_id=company_id, user_id=current_user.id,
                entity_name=f"{invoice_number} ({', '.join(product_names)})")
 
-    for product in products_cache.values():
-        check_stock_alerts(db, request, product, company_id, current_user.id)
 
     return db.query(Sale).options(
         joinedload(Sale.items).joinedload(SaleItem.product),
@@ -364,6 +392,7 @@ def update_sale(
     if not sale:
         raise HTTPException(status_code=404, detail="Sale not found")
 
+    original_customer_id = sale.customer_id
     products_cache: dict = {}
 
     if payload.items is not None:
@@ -391,7 +420,19 @@ def update_sale(
         log_action(db, request, "Inventory Updated", company_id=company_id,
                    user_id=current_user.id, entity_name=sale.invoice_number)
 
-    if payload.customer_name is not None:
+    if payload.clear_customer:
+        sale.customer_id = None
+        if payload.customer_name is not None:
+            sale.customer_name = payload.customer_name
+    elif payload.customer_id is not None:
+        customer = db.query(Customer).filter(
+            Customer.id == payload.customer_id, Customer.company_id == company_id
+        ).first()
+        if not customer:
+            raise HTTPException(status_code=400, detail="Customer not found")
+        sale.customer_id = customer.id
+        sale.customer_name = customer.full_name
+    elif payload.customer_name is not None:
         sale.customer_name = payload.customer_name
     if payload.sale_date is not None:
         sale.sale_date = payload.sale_date
@@ -403,11 +444,13 @@ def update_sale(
     db.commit()
     db.refresh(sale)
 
+    affected_customer_ids = {cid for cid in (original_customer_id, sale.customer_id) if cid}
+    for cid in affected_customer_ids:
+        recalculate_purchase_summary(db, cid)
+
     log_action(db, request, "Sale Updated", company_id=company_id,
                user_id=current_user.id, entity_name=sale.invoice_number)
 
-    for product in products_cache.values():
-        check_stock_alerts(db, request, product, company_id, current_user.id)
 
     return db.query(Sale).options(
         joinedload(Sale.items).joinedload(SaleItem.product),
@@ -431,6 +474,8 @@ def delete_sale(
         raise HTTPException(status_code=404, detail="Sale not found")
 
     products_cache: dict = {}
+    invoice_number = sale.invoice_number
+    linked_customer_id = sale.customer_id
     for item in sale.items:
         product = db.query(Product).filter(Product.id == item.product_id).first()
         if product:
@@ -438,9 +483,11 @@ def delete_sale(
             products_cache[product.id] = product
             record_sale_stock_movement(db, item.product_id, company_id, item.quantity, invoice_number, current_user.id)
 
-    invoice_number = sale.invoice_number
     db.delete(sale)
     db.commit()
+
+    if linked_customer_id:
+        recalculate_purchase_summary(db, linked_customer_id)
 
     log_action(db, request, "Sale Deleted", company_id=company_id,
                user_id=current_user.id, entity_name=invoice_number)
@@ -448,7 +495,5 @@ def delete_sale(
         log_action(db, request, "Inventory Updated", company_id=company_id,
                    user_id=current_user.id, entity_name=invoice_number)
 
-    for product in products_cache.values():
-        check_stock_alerts(db, request, product, company_id, current_user.id)
 
     return None
