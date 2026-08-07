@@ -457,6 +457,8 @@ export interface CustomerPurchaseSummary {
 export interface Customer {
   id: string;
   customer_code: string;
+  first_name: string;
+  last_name: string;
   full_name: string;
   email: string;
   phone: string;
@@ -466,6 +468,7 @@ export interface Customer {
   city: string | null;
   state: string | null;
   country: string | null;
+  postal_code: string | null;
   customer_type: CustomerType;
   preferred_channel: string | null;
   status: CustomerStatus;
@@ -514,7 +517,8 @@ export interface CustomerListParams {
 }
 
 export interface CustomerPayload {
-  full_name: string;
+  first_name: string;
+  last_name: string;
   email: string;
   phone: string;
   date_of_birth?: string | null;
@@ -523,6 +527,7 @@ export interface CustomerPayload {
   city?: string | null;
   state?: string | null;
   country?: string | null;
+  postal_code?: string | null;
   customer_type: CustomerType;
   preferred_channel?: string | null;
   status?: CustomerStatus;

@@ -3,13 +3,14 @@ import { Link } from "react-router-dom";
 import Modal from "../components/Modal";
 import { useAuth } from "../context/AuthContext";
 import {
-  listCustomers, createCustomer, updateCustomer, updateCustomerStatus, deleteCustomer, exportCustomers,
+  listCustomers, createCustomer, updateCustomer, updateCustomerStatus, deleteCustomer,
+  exportCustomers, getCustomerProfile,
 } from "../api/customers";
 import type { CustomerListItem, CustomerListParams, CustomerPayload, CustomerType, CustomerStatus } from "../types";
 
 const EMPTY_FORM: CustomerPayload = {
-  full_name: "", email: "", phone: "", customer_type: "RETAIL",
-  address: "", city: "", state: "", country: "", preferred_channel: "",
+  first_name: "", last_name: "", email: "", phone: "", customer_type: "RETAIL",
+  address: "", city: "", state: "", country: "", postal_code: "", preferred_channel: "",
 };
 
 const SEGMENT_STYLES: Record<string, string> = {
@@ -70,16 +71,43 @@ export default function Customers() {
   const openCreate = () => { setEditingId(null); setForm(EMPTY_FORM); setFormError(null); setModalOpen(true); };
   const openEdit = async (item: CustomerListItem) => {
     setEditingId(item.id);
-    setForm({
-      full_name: item.full_name, email: item.email, phone: item.phone,
-      customer_type: item.customer_type, city: item.city ?? "", state: item.state ?? "",
-      country: item.country ?? "", address: "", preferred_channel: "",
-    });
+    setForm(EMPTY_FORM); // clear stale values while the real profile loads
     setFormError(null);
     setModalOpen(true);
+    try {
+      const profile = await getCustomerProfile(item.id);
+      const c = profile.customer;
+      setForm({
+        first_name: c.first_name, last_name: c.last_name, email: c.email, phone: c.phone,
+        date_of_birth: c.date_of_birth, gender: c.gender,
+        address: c.address ?? "", city: c.city ?? "", state: c.state ?? "",
+        country: c.country ?? "", postal_code: c.postal_code ?? "",
+        customer_type: c.customer_type, preferred_channel: c.preferred_channel ?? "",
+      });
+    } catch {
+      setFormError("Failed to load customer details.");
+    }
+  };
+
+  const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const PHONE_PATTERN = /^\+?[0-9][0-9\s\-().]{6,19}$/;
+
+  const validateForm = (): string | null => {
+    if (!form.first_name.trim()) return "First name is required.";
+    if (!form.last_name.trim()) return "Last name is required.";
+    if (!form.email.trim()) return "Email is required.";
+    if (!EMAIL_PATTERN.test(form.email.trim())) return "Enter a valid email address.";
+    if (!form.phone.trim()) return "Phone number is required.";
+    if (!PHONE_PATTERN.test(form.phone.trim())) return "Enter a valid phone number.";
+    return null;
   };
 
   const handleSubmit = async () => {
+    const validationError = validateForm();
+    if (validationError) {
+      setFormError(validationError);
+      return;
+    }
     setSaving(true);
     setFormError(null);
     try {
@@ -91,7 +119,12 @@ export default function Customers() {
       setModalOpen(false);
       load();
     } catch (err: any) {
-      setFormError(err?.response?.data?.detail ?? "Failed to save customer.");
+      const detail = err?.response?.data?.detail;
+      if (err?.response?.status === 409 || (typeof detail === "string" && detail.toLowerCase().includes("already exists"))) {
+        setFormError(detail ?? "A customer with this email or phone already exists.");
+      } else {
+        setFormError(detail ?? "Failed to save customer. Please try again.");
+      }
     } finally {
       setSaving(false);
     }
@@ -173,9 +206,13 @@ export default function Customers() {
             </tr>
           </thead>
           <tbody>
-            {loading && (
-              <tr><td colSpan={8} className="p-6 text-center text-slate-400">Loading…</td></tr>
-            )}
+            {loading && Array.from({ length: 6 }).map((_, i) => (
+              <tr key={`skeleton-${i}`} className="border-b border-slate-50 last:border-0">
+                {Array.from({ length: 8 }).map((_, j) => (
+                  <td key={j} className="p-3"><div className="h-4 w-full max-w-[120px] animate-pulse rounded bg-slate-100" /></td>
+                ))}
+              </tr>
+            ))}
             {!loading && items.length === 0 && (
               <tr><td colSpan={8} className="p-6 text-center text-slate-400">No customers found.</td></tr>
             )}
@@ -229,9 +266,15 @@ export default function Customers() {
       <Modal title={editingId ? "Edit Customer" : "Add Customer"} onClose={() => setModalOpen(false)} wide>
         <div className="space-y-3">
           {formError && <p className="text-sm text-red-600">{formError}</p>}
-          <div>
-            <label className="form-label">Full Name *</label>
-            <input className="form-input" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="form-label">First Name *</label>
+              <input className="form-input" value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} />
+            </div>
+            <div>
+              <label className="form-label">Last Name *</label>
+              <input className="form-input" value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} />
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -240,7 +283,7 @@ export default function Customers() {
             </div>
             <div>
               <label className="form-label">Phone *</label>
-              <input className="form-input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+              <input className="form-input" placeholder="+1 555 123 4567" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -266,7 +309,7 @@ export default function Customers() {
             <label className="form-label">Address</label>
             <input className="form-input" value={form.address ?? ""} onChange={(e) => setForm({ ...form, address: e.target.value })} />
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-4 gap-3">
             <div>
               <label className="form-label">City</label>
               <input className="form-input" value={form.city ?? ""} onChange={(e) => setForm({ ...form, city: e.target.value })} />
@@ -278,6 +321,10 @@ export default function Customers() {
             <div>
               <label className="form-label">Country</label>
               <input className="form-input" value={form.country ?? ""} onChange={(e) => setForm({ ...form, country: e.target.value })} />
+            </div>
+            <div>
+              <label className="form-label">Postal Code</label>
+              <input className="form-input" value={form.postal_code ?? ""} onChange={(e) => setForm({ ...form, postal_code: e.target.value })} />
             </div>
           </div>
           <div className="flex justify-end gap-2 pt-2">

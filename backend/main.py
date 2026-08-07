@@ -70,6 +70,35 @@ with engine.connect() as conn:
         except Exception:
             pass
     conn.commit()
+
+    # Task 8: structured name fields, postal code, and soft delete on the
+    # already-existing `customers` table from Task 6.
+    conn.execute(text("ALTER TABLE customers ADD COLUMN IF NOT EXISTS first_name VARCHAR(150) NOT NULL DEFAULT ''"))
+    conn.execute(text("ALTER TABLE customers ADD COLUMN IF NOT EXISTS last_name VARCHAR(150) NOT NULL DEFAULT ''"))
+    conn.execute(text("ALTER TABLE customers ADD COLUMN IF NOT EXISTS postal_code VARCHAR(30)"))
+    conn.execute(text("ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE"))
+    conn.execute(text("ALTER TABLE customers ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP"))
+    # Backfill first/last name for rows created before this column existed.
+    conn.execute(text(
+        "UPDATE customers SET "
+        "first_name = split_part(full_name, ' ', 1), "
+        "last_name = COALESCE(NULLIF(substr(full_name, length(split_part(full_name, ' ', 1)) + 2), ''), '') "
+        "WHERE first_name = '' AND full_name IS NOT NULL"
+    ))
+    # Replace the old always-on unique constraints with partial indexes that
+    # only apply to non-deleted customers, so a soft-deleted customer's
+    # email/phone can be reused by a new registration.
+    conn.execute(text("ALTER TABLE customers DROP CONSTRAINT IF EXISTS uq_customers_company_email"))
+    conn.execute(text("ALTER TABLE customers DROP CONSTRAINT IF EXISTS uq_customers_company_phone"))
+    conn.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_customers_company_email_live "
+        "ON customers (company_id, email) WHERE is_deleted = FALSE"
+    ))
+    conn.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_customers_company_phone_live "
+        "ON customers (company_id, phone) WHERE is_deleted = FALSE"
+    ))
+    conn.commit()
 with SessionLocal() as db:
     from app.models import Product, Inventory
     from app.services.inventory_utils import compute_stock_status

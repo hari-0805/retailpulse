@@ -48,7 +48,7 @@ def _get_customer_or_404(db: Session, company_id: str, customer_id: str) -> Cust
     customer = db.query(Customer).options(
         joinedload(Customer.purchase_summary).joinedload(CustomerPurchaseSummary.favorite_product),
         joinedload(Customer.purchase_summary).joinedload(CustomerPurchaseSummary.favorite_category),
-    ).filter(Customer.id == customer_id, Customer.company_id == company_id).first()
+    ).filter(Customer.id == customer_id, Customer.company_id == company_id, Customer.is_deleted.is_(False)).first()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
     return customer
@@ -57,6 +57,7 @@ def _get_customer_or_404(db: Session, company_id: str, customer_id: str) -> Cust
 def _check_duplicate(db: Session, company_id: str, email: str, phone: str, exclude_id: Optional[str] = None):
     query = db.query(Customer).filter(
         Customer.company_id == company_id,
+        Customer.is_deleted.is_(False),
         or_(Customer.email == email, Customer.phone == phone),
     )
     if exclude_id:
@@ -109,7 +110,7 @@ def list_customers(
 ):
     query = db.query(Customer, CustomerPurchaseSummary).outerjoin(
         CustomerPurchaseSummary, CustomerPurchaseSummary.customer_id == Customer.id
-    ).filter(Customer.company_id == company_id)
+    ).filter(Customer.company_id == company_id, Customer.is_deleted.is_(False))
 
     if search:
         like = f"%{search}%"
@@ -159,7 +160,9 @@ def create_customer(
     customer = Customer(
         company_id=company_id,
         customer_code=generate_customer_code(db, company_id),
-        full_name=payload.full_name,
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        full_name=f"{payload.first_name} {payload.last_name}".strip(),
         email=payload.email,
         phone=payload.phone,
         date_of_birth=payload.date_of_birth,
@@ -168,6 +171,7 @@ def create_customer(
         city=payload.city,
         state=payload.state,
         country=payload.country,
+        postal_code=payload.postal_code,
         customer_type=payload.customer_type,
         preferred_channel=payload.preferred_channel,
         status=payload.status,
@@ -216,7 +220,7 @@ def export_customers(
 ):
     query = db.query(Customer, CustomerPurchaseSummary).outerjoin(
         CustomerPurchaseSummary, CustomerPurchaseSummary.customer_id == Customer.id
-    ).filter(Customer.company_id == company_id)
+    ).filter(Customer.company_id == company_id, Customer.is_deleted.is_(False))
     if search:
         like = f"%{search}%"
         query = query.filter(or_(Customer.full_name.ilike(like), Customer.customer_code.ilike(like)))
@@ -299,7 +303,7 @@ def get_customer_analytics_summary(
 ):
     scan_inactive_customers(db, company_id)
 
-    customers = db.query(Customer).filter(Customer.company_id == company_id).all()
+    customers = db.query(Customer).filter(Customer.company_id == company_id, Customer.is_deleted.is_(False)).all()
     summaries = {
         s.customer_id: s for s in db.query(CustomerPurchaseSummary).filter(
             CustomerPurchaseSummary.company_id == company_id
@@ -549,7 +553,7 @@ def export_top_customers(
     rows = db.query(Customer, CustomerPurchaseSummary).join(
         CustomerPurchaseSummary, CustomerPurchaseSummary.customer_id == Customer.id
     ).filter(
-        Customer.company_id == company_id, CustomerPurchaseSummary.total_orders > 0
+        Customer.company_id == company_id, Customer.is_deleted.is_(False), CustomerPurchaseSummary.total_orders > 0
     ).order_by(CustomerPurchaseSummary.total_revenue.desc()).limit(limit).all()
 
     log_action(db, request, "Customer Exported", company_id=company_id, user_id=current_user.id,
@@ -653,12 +657,15 @@ def update_customer(
         _check_duplicate(db, company_id, new_email, new_phone, exclude_id=customer_id)
 
     changed_fields = []
-    for field in ["full_name", "email", "phone", "date_of_birth", "gender", "address",
-                  "city", "state", "country", "customer_type", "preferred_channel"]:
+    for field in ["first_name", "last_name", "email", "phone", "date_of_birth", "gender", "address",
+                  "city", "state", "country", "postal_code", "customer_type", "preferred_channel"]:
         value = getattr(payload, field)
         if value is not None and getattr(customer, field) != value:
             setattr(customer, field, value)
             changed_fields.append(field)
+
+    if "first_name" in changed_fields or "last_name" in changed_fields:
+        customer.full_name = f"{customer.first_name} {customer.last_name}".strip()
 
     try:
         db.flush()
@@ -725,7 +732,8 @@ def delete_customer(
     customer = _get_customer_or_404(db, company_id, customer_id)
     label = f"{customer.customer_code} ({customer.full_name})"
 
-    db.delete(customer)
+    customer.is_deleted = True
+    customer.deleted_at = datetime.utcnow()
     db.commit()
 
     log_action(db, request, "Customer Deleted", company_id=company_id, user_id=current_user.id, entity_name=label)

@@ -115,6 +115,7 @@ export default function CustomerProfile() {
           <InfoRow label="City" value={customer.city} />
           <InfoRow label="State" value={customer.state} />
           <InfoRow label="Country" value={customer.country} />
+          <InfoRow label="Postal Code" value={customer.postal_code} />
           <InfoRow label="Preferred Channel" value={customer.preferred_channel} />
           <InfoRow label="Customer Since" value={new Date(customer.created_at).toLocaleDateString()} />
           <InfoRow label="Favorite Product" value={summary?.favorite_product?.name} />
