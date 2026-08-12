@@ -131,6 +131,7 @@ export interface ProductOption {
 
 export type SalesChannel = "RETAIL_STORE" | "ONLINE_STORE" | "MARKETPLACE";
 export type PaymentMethod = "CASH" | "CARD" | "UPI" | "BANK_TRANSFER";
+export type PaymentStatus = "PENDING" | "PAID" | "PARTIALLY_PAID" | "REFUNDED";
 
 export interface SaleItem {
   id: string;
@@ -154,6 +155,8 @@ export interface Sale {
   sale_date: string;
   sales_channel: SalesChannel;
   payment_method: PaymentMethod;
+  payment_status: PaymentStatus;
+  notes?: string | null;
   total_amount: number;
   items: SaleItem[];
   creator?: { id: string; name: string } | null;
@@ -176,6 +179,8 @@ export interface SalePayload {
   sale_date?: string;
   sales_channel: SalesChannel;
   payment_method: PaymentMethod;
+  payment_status?: PaymentStatus;
+  notes?: string;
   items: SaleItemPayload[];
 }
 
@@ -186,6 +191,7 @@ export interface SaleListItem {
   sale_date: string;
   sales_channel: SalesChannel;
   payment_method: PaymentMethod;
+  payment_status: PaymentStatus;
   total_amount: number;
   item_count: number;
 }
@@ -204,7 +210,8 @@ export interface SaleListParams {
   brand?: string;
   sales_channel?: SalesChannel;
   payment_method?: PaymentMethod;
-  sort_by?: "date" | "invoice" | "total";
+  payment_status?: PaymentStatus;
+  sort_by?: "date" | "invoice" | "total" | "customer";
   sort_dir?: "asc" | "desc";
   page?: number;
   page_size?: number;

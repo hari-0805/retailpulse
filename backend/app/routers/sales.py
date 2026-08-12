@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.models import (
     Sale, SaleItem, Product, ProductStatus, User, UserRole,
-    SalesChannel, PaymentMethod, Notification, NotificationType, Customer,
+    SalesChannel, PaymentMethod, PaymentStatus, Notification, NotificationType, Customer,
 )
 from app.models.inventory import Inventory, InventoryMovement, MovementType, StockStatus
 from app.schemas import (
@@ -30,6 +30,7 @@ SORT_FIELDS = {
     "date": Sale.sale_date,
     "invoice": Sale.invoice_number,
     "total": Sale.total_amount,
+    "customer": Sale.customer_name,
 }
 
 
@@ -194,6 +195,7 @@ def _serialize_list_item(sale: Sale) -> dict:
         "sale_date": sale.sale_date,
         "sales_channel": sale.sales_channel,
         "payment_method": sale.payment_method,
+        "payment_status": sale.payment_status,
         "total_amount": sale.total_amount,
         "item_count": len(sale.items),
     }
@@ -209,7 +211,8 @@ def list_sales(
     brand: Optional[str] = None,
     sales_channel: Optional[SalesChannel] = None,
     payment_method: Optional[PaymentMethod] = None,
-    sort_by: str = Query("date", pattern="^(date|invoice|total)$"),
+    payment_status: Optional[PaymentStatus] = None,
+    sort_by: str = Query("date", pattern="^(date|invoice|total|customer)$"),
     sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -258,6 +261,8 @@ def list_sales(
         query = query.filter(Sale.sales_channel == sales_channel)
     if payment_method:
         query = query.filter(Sale.payment_method == payment_method)
+    if payment_status:
+        query = query.filter(Sale.payment_status == payment_status)
 
     total = query.distinct().count()
 
@@ -301,6 +306,8 @@ def create_sale(
         sale_date=payload.sale_date or datetime.utcnow(),
         sales_channel=payload.sales_channel,
         payment_method=payload.payment_method,
+        payment_status=payload.payment_status,
+        notes=payload.notes,
         total_amount=total_amount,
         created_by=current_user.id,
     )
@@ -377,6 +384,124 @@ def get_sale(
     return sale
 
 
+@router.get("/{sale_id}/export")
+def export_invoice(
+    sale_id: str,
+    format: str = Query(..., pattern="^(csv|pdf)$"),
+    request: Request = None,
+    db: Session = Depends(get_db),
+    company_id: str = Depends(get_current_company_id),
+    current_user: User = Depends(require_roles(SALES_ROLES)),
+):
+    sale = db.query(Sale).options(
+        joinedload(Sale.items).joinedload(SaleItem.product),
+        joinedload(Sale.items).joinedload(SaleItem.category),
+        joinedload(Sale.creator),
+    ).filter(Sale.id == sale_id, Sale.company_id == company_id).first()
+    if not sale:
+        raise HTTPException(status_code=404, detail="Sale not found")
+
+    subtotal = sum((i.quantity * i.unit_price for i in sale.items), Decimal("0"))
+    total_discount = sum((i.discount for i in sale.items), Decimal("0"))
+    total_tax = sum((i.tax for i in sale.items), Decimal("0"))
+
+    log_action(db, request, "Sale Exported", company_id=company_id, user_id=current_user.id,
+               entity_name=sale.invoice_number, details=f"format={format}")
+
+    if format == "csv":
+        import csv, io
+        from fastapi.responses import StreamingResponse
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["Invoice", sale.invoice_number])
+        writer.writerow(["Customer", sale.customer_name])
+        writer.writerow(["Sale Date", sale.sale_date.strftime("%Y-%m-%d %H:%M")])
+        writer.writerow(["Payment Method", sale.payment_method.value])
+        writer.writerow(["Payment Status", sale.payment_status.value])
+        writer.writerow(["Salesperson", sale.creator.name if sale.creator else ""])
+        writer.writerow(["Notes", sale.notes or ""])
+        writer.writerow([])
+        writer.writerow(["Product", "SKU", "Category", "Quantity", "Unit Price", "Discount", "Tax", "Line Total"])
+        for item in sale.items:
+            writer.writerow([
+                item.product.name, item.product.sku, item.category.name, item.quantity,
+                str(item.unit_price), str(item.discount), str(item.tax), str(item.total),
+            ])
+        writer.writerow([])
+        writer.writerow(["Subtotal", str(subtotal)])
+        writer.writerow(["Discount", str(total_discount)])
+        writer.writerow(["Tax", str(total_tax)])
+        writer.writerow(["Grand Total", str(sale.total_amount)])
+        buffer.seek(0)
+        return StreamingResponse(
+            iter([buffer.getvalue()]), media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=invoice_{sale.invoice_number}.csv"},
+        )
+
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Spacer, Paragraph
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib.units import cm
+        from fastapi.responses import StreamingResponse
+        import io
+    except ImportError:
+        raise HTTPException(status_code=500, detail="PDF export requires the 'reportlab' package.")
+
+    pdf_buffer = io.BytesIO()
+    doc = SimpleDocTemplate(pdf_buffer, pagesize=A4)
+    styles = getSampleStyleSheet()
+    elements = [
+        Paragraph(f"Invoice {sale.invoice_number}", styles["Title"]),
+        Spacer(1, 0.3 * cm),
+        Paragraph(
+            f"Customer: {sale.customer_name} &nbsp;&nbsp; Date: {sale.sale_date.strftime('%Y-%m-%d')} &nbsp;&nbsp; "
+            f"Payment: {sale.payment_method.value} ({sale.payment_status.value}) &nbsp;&nbsp; "
+            f"Salesperson: {sale.creator.name if sale.creator else '—'}",
+            styles["Normal"],
+        ),
+        Spacer(1, 0.5 * cm),
+    ]
+
+    item_rows = [["Product", "SKU", "Category", "Qty", "Unit Price", "Discount", "Tax", "Line Total"]] + [
+        [item.product.name, item.product.sku, item.category.name, item.quantity,
+         str(item.unit_price), str(item.discount), str(item.tax), str(item.total)]
+        for item in sale.items
+    ]
+    item_table = Table(item_rows, repeatRows=1)
+    item_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2563eb")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+    ]))
+    elements += [item_table, Spacer(1, 0.6 * cm)]
+
+    summary_rows = [
+        ["Subtotal", str(subtotal)],
+        ["Discount", str(total_discount)],
+        ["Tax", str(total_tax)],
+        ["Grand Total", str(sale.total_amount)],
+    ]
+    summary_table = Table(summary_rows, colWidths=[4 * cm, 4 * cm])
+    summary_table.setStyle(TableStyle([
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("FONTNAME", (0, 3), (-1, 3), "Helvetica-Bold"),
+        ("LINEABOVE", (0, 3), (-1, 3), 0.6, colors.black),
+    ]))
+    elements.append(summary_table)
+    if sale.notes:
+        elements += [Spacer(1, 0.5 * cm), Paragraph(f"Notes: {sale.notes}", styles["Normal"])]
+
+    doc.build(elements)
+    pdf_buffer.seek(0)
+    return StreamingResponse(
+        pdf_buffer, media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=invoice_{sale.invoice_number}.pdf"},
+    )
+
+
 @router.put("/{sale_id}", response_model=SaleOut)
 def update_sale(
     sale_id: str,
@@ -440,6 +565,10 @@ def update_sale(
         sale.sales_channel = payload.sales_channel
     if payload.payment_method is not None:
         sale.payment_method = payload.payment_method
+    if payload.payment_status is not None:
+        sale.payment_status = payload.payment_status
+    if payload.notes is not None:
+        sale.notes = payload.notes
 
     db.commit()
     db.refresh(sale)

@@ -79,6 +79,9 @@ with engine.connect() as conn:
     conn.execute(text("ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE"))
     conn.execute(text("ALTER TABLE customers ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP"))
     # Backfill first/last name for rows created before this column existed.
+    # COALESCE(...,'') matters here: a single-word full_name (e.g. "viji")
+    # has no space, so the substr() below would otherwise evaluate to NULL
+    # and violate the NOT NULL constraint on last_name.
     conn.execute(text(
         "UPDATE customers SET "
         "first_name = split_part(full_name, ' ', 1), "
@@ -98,6 +101,18 @@ with engine.connect() as conn:
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_customers_company_phone_live "
         "ON customers (company_id, phone) WHERE is_deleted = FALSE"
     ))
+    conn.commit()
+
+    # Task 9: payment status and notes on the already-existing `sales` table.
+    conn.execute(text(
+        "DO $$ BEGIN "
+        "CREATE TYPE paymentstatus AS ENUM ('PENDING','PAID','PARTIALLY_PAID','REFUNDED'); "
+        "EXCEPTION WHEN duplicate_object THEN null; END $$;"
+    ))
+    conn.execute(text(
+        "ALTER TABLE sales ADD COLUMN IF NOT EXISTS payment_status paymentstatus NOT NULL DEFAULT 'PAID'"
+    ))
+    conn.execute(text("ALTER TABLE sales ADD COLUMN IF NOT EXISTS notes VARCHAR(1000)"))
     conn.commit()
 with SessionLocal() as db:
     from app.models import Product, Inventory
