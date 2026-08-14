@@ -349,6 +349,7 @@ export interface AnalyticsFilters {
   brand?: string;
   sales_channel?: SalesChannel | "";
   payment_method?: PaymentMethod | "";
+  customer_id?: string;
   granularity?: "daily" | "weekly" | "monthly";
 }
 
@@ -357,10 +358,20 @@ export interface AnalyticsKPIs {
   total_orders: number;
   total_products_sold: number;
   average_order_value: number;
+  total_discount: number;
+  total_tax: number;
   total_inventory_value: number;
   low_stock_products: number;
   out_of_stock_products: number;
   total_categories: number;
+}
+
+export interface CustomerRevenueRow {
+  customer_id: string | null;
+  customer_name: string;
+  orders: number;
+  total_spend: number;
+  average_order_value: number;
 }
 
 export interface RevenueTrendPoint {
@@ -430,6 +441,7 @@ export interface AnalyticsSummary {
   top_categories: TopCategoryRow[];
   by_payment_method: PaymentMethodBreakdown[];
   by_sales_channel: SalesChannelBreakdown[];
+  customer_revenue: CustomerRevenueRow[];
   inventory_by_category: InventoryCategoryBreakdown[];
   inventory_status_summary: InventoryStatusBreakdown[];
   top_low_stock: LowStockRow[];

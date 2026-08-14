@@ -10,6 +10,8 @@ class AnalyticsKPIs(BaseModel):
     total_orders: int
     total_products_sold: int
     average_order_value: Decimal
+    total_discount: Decimal
+    total_tax: Decimal
     total_inventory_value: Decimal
     low_stock_products: int
     out_of_stock_products: int
@@ -76,6 +78,14 @@ class OutOfStockRow(BaseModel):
     updated_at: datetime
 
 
+class CustomerRevenueRow(BaseModel):
+    customer_id: str | None
+    customer_name: str
+    orders: int
+    total_spend: Decimal
+    average_order_value: Decimal
+
+
 class AnalyticsSummary(BaseModel):
     kpis: AnalyticsKPIs
     revenue_trend: List[RevenueTrendPoint]
@@ -83,6 +93,7 @@ class AnalyticsSummary(BaseModel):
     top_categories: List[TopCategoryRow]
     by_payment_method: List[PaymentMethodBreakdown]
     by_sales_channel: List[SalesChannelBreakdown]
+    customer_revenue: List[CustomerRevenueRow]
     inventory_by_category: List[InventoryCategoryBreakdown]
     inventory_status_summary: List[InventoryStatusBreakdown]
     top_low_stock: List[LowStockRow]
