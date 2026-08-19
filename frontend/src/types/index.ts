@@ -131,6 +131,7 @@ export interface ProductOption {
 
 export type SalesChannel = "RETAIL_STORE" | "ONLINE_STORE" | "MARKETPLACE";
 export type PaymentMethod = "CASH" | "CARD" | "UPI" | "BANK_TRANSFER";
+export type PaymentStatus = "PENDING" | "PAID" | "PARTIALLY_PAID" | "REFUNDED";
 
 export interface SaleItem {
   id: string;
@@ -154,6 +155,8 @@ export interface Sale {
   sale_date: string;
   sales_channel: SalesChannel;
   payment_method: PaymentMethod;
+  payment_status: PaymentStatus;
+  notes?: string | null;
   total_amount: number;
   items: SaleItem[];
   creator?: { id: string; name: string } | null;
@@ -176,6 +179,8 @@ export interface SalePayload {
   sale_date?: string;
   sales_channel: SalesChannel;
   payment_method: PaymentMethod;
+  payment_status?: PaymentStatus;
+  notes?: string;
   items: SaleItemPayload[];
 }
 
@@ -186,6 +191,7 @@ export interface SaleListItem {
   sale_date: string;
   sales_channel: SalesChannel;
   payment_method: PaymentMethod;
+  payment_status: PaymentStatus;
   total_amount: number;
   item_count: number;
 }
@@ -204,7 +210,8 @@ export interface SaleListParams {
   brand?: string;
   sales_channel?: SalesChannel;
   payment_method?: PaymentMethod;
-  sort_by?: "date" | "invoice" | "total";
+  payment_status?: PaymentStatus;
+  sort_by?: "date" | "invoice" | "total" | "customer";
   sort_dir?: "asc" | "desc";
   page?: number;
   page_size?: number;
@@ -342,6 +349,7 @@ export interface AnalyticsFilters {
   brand?: string;
   sales_channel?: SalesChannel | "";
   payment_method?: PaymentMethod | "";
+  customer_id?: string;
   granularity?: "daily" | "weekly" | "monthly";
 }
 
@@ -350,10 +358,20 @@ export interface AnalyticsKPIs {
   total_orders: number;
   total_products_sold: number;
   average_order_value: number;
+  total_discount: number;
+  total_tax: number;
   total_inventory_value: number;
   low_stock_products: number;
   out_of_stock_products: number;
   total_categories: number;
+}
+
+export interface CustomerRevenueRow {
+  customer_id: string | null;
+  customer_name: string;
+  orders: number;
+  total_spend: number;
+  average_order_value: number;
 }
 
 export interface RevenueTrendPoint {
@@ -423,6 +441,7 @@ export interface AnalyticsSummary {
   top_categories: TopCategoryRow[];
   by_payment_method: PaymentMethodBreakdown[];
   by_sales_channel: SalesChannelBreakdown[];
+  customer_revenue: CustomerRevenueRow[];
   inventory_by_category: InventoryCategoryBreakdown[];
   inventory_status_summary: InventoryStatusBreakdown[];
   top_low_stock: LowStockRow[];
@@ -457,6 +476,8 @@ export interface CustomerPurchaseSummary {
 export interface Customer {
   id: string;
   customer_code: string;
+  first_name: string;
+  last_name: string;
   full_name: string;
   email: string;
   phone: string;
@@ -466,6 +487,7 @@ export interface Customer {
   city: string | null;
   state: string | null;
   country: string | null;
+  postal_code: string | null;
   customer_type: CustomerType;
   preferred_channel: string | null;
   status: CustomerStatus;
@@ -514,7 +536,8 @@ export interface CustomerListParams {
 }
 
 export interface CustomerPayload {
-  full_name: string;
+  first_name: string;
+  last_name: string;
   email: string;
   phone: string;
   date_of_birth?: string | null;
@@ -523,6 +546,7 @@ export interface CustomerPayload {
   city?: string | null;
   state?: string | null;
   country?: string | null;
+  postal_code?: string | null;
   customer_type: CustomerType;
   preferred_channel?: string | null;
   status?: CustomerStatus;

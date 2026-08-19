@@ -25,6 +25,13 @@ class PaymentMethod(str, enum.Enum):
     BANK_TRANSFER = "BANK_TRANSFER"
 
 
+class PaymentStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    PAID = "PAID"
+    PARTIALLY_PAID = "PARTIALLY_PAID"
+    REFUNDED = "REFUNDED"
+
+
 class Sale(Base):
     __tablename__ = "sales"
 
@@ -38,6 +45,9 @@ class Sale(Base):
     sale_date = Column(DateTime, nullable=False, default=datetime.utcnow)
     sales_channel = Column(SAEnum(SalesChannel), nullable=False)
     payment_method = Column(SAEnum(PaymentMethod), nullable=False)
+    # Task 9: payment/order status, distinct from payment_method (how vs. whether paid).
+    payment_status = Column(SAEnum(PaymentStatus), nullable=False, default=PaymentStatus.PAID)
+    notes = Column(String(1000), nullable=True)
     total_amount = Column(Numeric(12, 2), nullable=False, default=0)
     created_by = Column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

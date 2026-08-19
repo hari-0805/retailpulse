@@ -25,7 +25,7 @@ def _sales_base_query(
     db: Session, company_id: str,
     date_from: Optional[date], date_to: Optional[date],
     category_id: Optional[str], product_id: Optional[str], brand: Optional[str],
-    sales_channel: Optional[str], payment_method: Optional[str],
+    sales_channel: Optional[str], payment_method: Optional[str], customer_id: Optional[str] = None,
 ):
     """
     Sale + SaleItem joined query with every dashboard filter applied.
@@ -52,6 +52,8 @@ def _sales_base_query(
         query = query.filter(Sale.sales_channel == sales_channel)
     if payment_method:
         query = query.filter(Sale.payment_method == payment_method)
+    if customer_id:
+        query = query.filter(Sale.customer_id == customer_id)
     return query
 
 
@@ -80,11 +82,11 @@ def _build_summary(
     date_from: Optional[date], date_to: Optional[date],
     category_id: Optional[str], product_id: Optional[str], brand: Optional[str],
     sales_channel: Optional[str], payment_method: Optional[str],
-    granularity: str,
+    granularity: str, customer_id: Optional[str] = None,
 ) -> AnalyticsSummary:
     sales_rows = _sales_base_query(
         db, company_id, date_from, date_to, category_id, product_id, brand,
-        sales_channel, payment_method,
+        sales_channel, payment_method, customer_id,
     ).all()
 
     # De-duplicate sales for order-level aggregates (a sale can appear once
@@ -97,6 +99,8 @@ def _build_summary(
     total_orders = len(unique_sales)
     total_products_sold = sum((item.quantity for _s, item, _p in sales_rows), 0)
     average_order_value = (total_revenue / total_orders) if total_orders else Decimal("0")
+    total_discount = sum((item.discount for _s, item, _p in sales_rows), Decimal("0"))
+    total_tax = sum((item.tax for _s, item, _p in sales_rows), Decimal("0"))
 
     inv_rows = _inventory_base_query(db, company_id, category_id, product_id, brand).all()
     total_inventory_value = sum(
@@ -163,6 +167,20 @@ def _build_summary(
         centry["revenue"] += sale.total_amount
         centry["orders"] += 1
 
+    # --- Customer revenue analysis ---
+    customer_map: dict[str, dict] = {}
+    for sale in unique_sales.values():
+        key = sale.customer_id or f"unlinked:{sale.customer_name}"
+        entry = customer_map.setdefault(key, {
+            "customer_id": sale.customer_id, "customer_name": sale.customer_name,
+            "orders": 0, "total_spend": Decimal("0"),
+        })
+        entry["orders"] += 1
+        entry["total_spend"] += sale.total_amount
+    for entry in customer_map.values():
+        entry["average_order_value"] = entry["total_spend"] / entry["orders"] if entry["orders"] else Decimal("0")
+    customer_revenue = sorted(customer_map.values(), key=lambda r: r["total_spend"], reverse=True)[:10]
+
     # --- Inventory breakdowns ---
     inv_cat_map: dict[str, dict] = {}
     for inv, product in inv_rows:
@@ -201,6 +219,8 @@ def _build_summary(
             "total_orders": total_orders,
             "total_products_sold": total_products_sold,
             "average_order_value": average_order_value,
+            "total_discount": total_discount,
+            "total_tax": total_tax,
             "total_inventory_value": total_inventory_value,
             "low_stock_products": low_stock_products,
             "out_of_stock_products": out_of_stock_products,
@@ -211,6 +231,7 @@ def _build_summary(
         top_categories=top_categories,
         by_payment_method=list(payment_map.values()),
         by_sales_channel=list(channel_map.values()),
+        customer_revenue=customer_revenue,
         inventory_by_category=list(inv_cat_map.values()),
         inventory_status_summary=[{"status": k, "count": v} for k, v in status_map.items()],
         top_low_stock=top_low_stock,
@@ -228,6 +249,7 @@ def analytics_summary(
     brand: Optional[str] = None,
     sales_channel: Optional[str] = None,
     payment_method: Optional[str] = None,
+    customer_id: Optional[str] = None,
     granularity: str = Query("daily", pattern="^(daily|weekly|monthly)$"),
     db: Session = Depends(get_db),
     company_id: str = Depends(get_current_company_id),
@@ -235,7 +257,7 @@ def analytics_summary(
 ):
     return _build_summary(
         db, company_id, date_from, date_to, category_id, product_id, brand,
-        sales_channel, payment_method, granularity,
+        sales_channel, payment_method, granularity, customer_id,
     )
 
 
@@ -268,6 +290,7 @@ def export_analytics(
     brand: Optional[str] = None,
     sales_channel: Optional[str] = None,
     payment_method: Optional[str] = None,
+    customer_id: Optional[str] = None,
     request: Request = None,
     db: Session = Depends(get_db),
     company_id: str = Depends(get_current_company_id),
@@ -275,7 +298,7 @@ def export_analytics(
 ):
     summary = _build_summary(
         db, company_id, date_from, date_to, category_id, product_id, brand,
-        sales_channel, payment_method, "daily",
+        sales_channel, payment_method, "daily", customer_id,
     )
 
     log_action(
@@ -299,6 +322,10 @@ def export_analytics(
         writer.writerow(["Revenue Trend (Period)", "Revenue", "Orders"])
         for row in summary.revenue_trend:
             writer.writerow([row.period, row.revenue, row.orders])
+        writer.writerow([])
+        writer.writerow(["Top Customers", "Orders", "Total Spend", "Avg Order Value"])
+        for row in summary.customer_revenue:
+            writer.writerow([row.customer_name, row.orders, row.total_spend, row.average_order_value])
         buffer.seek(0)
         return StreamingResponse(
             iter([buffer.getvalue()]),
@@ -346,6 +373,20 @@ def export_analytics(
         ("FONTSIZE", (0, 0), (-1, -1), 8),
     ]))
     elements.append(top_table)
+
+    elements += [Spacer(1, 0.8 * cm), Paragraph("Top Customers", styles["Heading2"])]
+    cust_data = [["Customer", "Orders", "Total Spend", "Avg Order Value"]] + [
+        [row.customer_name, str(row.orders), str(row.total_spend), str(row.average_order_value)]
+        for row in summary.customer_revenue
+    ]
+    cust_table = Table(cust_data, colWidths=[6 * cm, 3 * cm, 3 * cm, 3 * cm])
+    cust_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2563eb")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+    ]))
+    elements.append(cust_table)
 
     doc.build(elements)
     pdf_buffer.seek(0)

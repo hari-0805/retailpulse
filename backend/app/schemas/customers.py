@@ -1,16 +1,26 @@
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
+import re
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.models import CustomerType, CustomerStatus, CustomerGender, CustomerSegment, CustomerActivityType
+
+PHONE_PATTERN = re.compile(r"^\+?[0-9][0-9\s\-().]{6,19}$")
+
+
+def _validate_phone(value: str) -> str:
+    if not PHONE_PATTERN.match(value.strip()):
+        raise ValueError("Enter a valid phone number (7-20 digits, may include +, spaces, - or parentheses)")
+    return value.strip()
 
 
 # ---------- Customer CRUD ----------
 
 class CustomerCreate(BaseModel):
-    full_name: str = Field(..., min_length=1, max_length=255)
+    first_name: str = Field(..., min_length=1, max_length=150)
+    last_name: str = Field(..., min_length=1, max_length=150)
     email: EmailStr
     phone: str = Field(..., min_length=1, max_length=50)
     date_of_birth: Optional[date] = None
@@ -19,13 +29,20 @@ class CustomerCreate(BaseModel):
     city: Optional[str] = Field(None, max_length=120)
     state: Optional[str] = Field(None, max_length=120)
     country: Optional[str] = Field(None, max_length=120)
+    postal_code: Optional[str] = Field(None, max_length=30)
     customer_type: CustomerType = CustomerType.RETAIL
     preferred_channel: Optional[str] = None
     status: CustomerStatus = CustomerStatus.ACTIVE
 
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        return _validate_phone(v)
+
 
 class CustomerUpdate(BaseModel):
-    full_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    first_name: Optional[str] = Field(None, min_length=1, max_length=150)
+    last_name: Optional[str] = Field(None, min_length=1, max_length=150)
     email: Optional[EmailStr] = None
     phone: Optional[str] = Field(None, min_length=1, max_length=50)
     date_of_birth: Optional[date] = None
@@ -34,8 +51,14 @@ class CustomerUpdate(BaseModel):
     city: Optional[str] = Field(None, max_length=120)
     state: Optional[str] = Field(None, max_length=120)
     country: Optional[str] = Field(None, max_length=120)
+    postal_code: Optional[str] = Field(None, max_length=30)
     customer_type: Optional[CustomerType] = None
     preferred_channel: Optional[str] = None
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_phone(v) if v is not None else v
 
 
 class CustomerStatusUpdate(BaseModel):
@@ -85,6 +108,8 @@ EMPTY_SUMMARY = CustomerPurchaseSummaryOut(
 class CustomerOut(BaseModel):
     id: str
     customer_code: str
+    first_name: str
+    last_name: str
     full_name: str
     email: str
     phone: str
@@ -94,6 +119,7 @@ class CustomerOut(BaseModel):
     city: Optional[str] = None
     state: Optional[str] = None
     country: Optional[str] = None
+    postal_code: Optional[str] = None
     customer_type: CustomerType
     preferred_channel: Optional[str] = None
     status: CustomerStatus

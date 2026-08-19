@@ -4,7 +4,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-from app.models import SalesChannel, PaymentMethod
+from app.models import SalesChannel, PaymentMethod, PaymentStatus
 from app.schemas.catalog import ProductCategoryOut
 
 
@@ -59,6 +59,8 @@ class SaleCreate(BaseModel):
     sale_date: Optional[datetime] = None
     sales_channel: SalesChannel
     payment_method: PaymentMethod
+    payment_status: PaymentStatus = PaymentStatus.PAID
+    notes: Optional[str] = Field(None, max_length=1000)
     items: list[SaleItemCreate] = Field(..., min_length=1)
 
 
@@ -69,6 +71,8 @@ class SaleUpdate(BaseModel):
     sale_date: Optional[datetime] = None
     sales_channel: Optional[SalesChannel] = None
     payment_method: Optional[PaymentMethod] = None
+    payment_status: Optional[PaymentStatus] = None
+    notes: Optional[str] = Field(None, max_length=1000)
     items: Optional[list[SaleItemCreate]] = Field(None, min_length=1)
 
 
@@ -88,6 +92,8 @@ class SaleOut(BaseModel):
     sale_date: datetime
     sales_channel: SalesChannel
     payment_method: PaymentMethod
+    payment_status: PaymentStatus
+    notes: Optional[str] = None
     total_amount: Decimal
     items: list[SaleItemOut]
     creator: Optional[SaleCreatorRef] = None
@@ -106,6 +112,7 @@ class SaleListItem(BaseModel):
     sale_date: datetime
     sales_channel: SalesChannel
     payment_method: PaymentMethod
+    payment_status: PaymentStatus
     total_amount: Decimal
     item_count: int
 

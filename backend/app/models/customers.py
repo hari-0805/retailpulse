@@ -3,7 +3,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     Column, String, DateTime, Date, ForeignKey, Enum as SAEnum,
-    Numeric, Integer, UniqueConstraint,
+    Numeric, Integer, UniqueConstraint, Boolean, Index,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -56,6 +56,12 @@ class Customer(Base):
     # Human-friendly auto-generated identifier, e.g. CUST-000123 (unique per company).
     customer_code = Column(String(30), nullable=False, index=True)
 
+    # Task 8: structured name fields. full_name stays as an auto-derived
+    # "First Last" convenience column since Customer Analytics, Forecasting
+    # notifications, and the Sales customer picker (Task 6/7) all display
+    # full_name directly — keeping it avoids touching every consumer.
+    first_name = Column(String(150), nullable=False, default="")
+    last_name = Column(String(150), nullable=False, default="")
     full_name = Column(String(255), nullable=False)
     email = Column(String(255), nullable=False)
     phone = Column(String(50), nullable=False)
@@ -66,6 +72,7 @@ class Customer(Base):
     city = Column(String(120), nullable=True)
     state = Column(String(120), nullable=True)
     country = Column(String(120), nullable=True)
+    postal_code = Column(String(30), nullable=True)
 
     customer_type = Column(SAEnum(CustomerType), nullable=False, default=CustomerType.RETAIL)
     # Reuses the same channel vocabulary as Sale.sales_channel (RETAIL_STORE / ONLINE_STORE / MARKETPLACE).
@@ -77,6 +84,10 @@ class Customer(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     deactivated_at = Column(DateTime, nullable=True)
+    # Task 8: soft delete. DELETE /customers/{id} now sets this instead of
+    # removing the row; every list/get query filters it out below.
+    is_deleted = Column(Boolean, nullable=False, default=False)
+    deleted_at = Column(DateTime, nullable=True)
 
     purchase_summary = relationship(
         "CustomerPurchaseSummary", back_populates="customer",
@@ -90,8 +101,10 @@ class Customer(Base):
 
     __table_args__ = (
         UniqueConstraint("company_id", "customer_code", name="uq_customers_company_code"),
-        UniqueConstraint("company_id", "email", name="uq_customers_company_email"),
-        UniqueConstraint("company_id", "phone", name="uq_customers_company_phone"),
+        Index("uq_customers_company_email_live", "company_id", "email", unique=True,
+              postgresql_where=(is_deleted.is_(False))),
+        Index("uq_customers_company_phone_live", "company_id", "phone", unique=True,
+              postgresql_where=(is_deleted.is_(False))),
     )
 
 

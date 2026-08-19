@@ -10,7 +10,8 @@ import { listSales } from "../api/sales";
 import { listCategories } from "../api/categories";
 import { listInventoryBrands } from "../api/inventory";
 import { listProductOptions } from "../api/products";
-import type { AnalyticsFilters, SaleListItem, ProductOption, Category } from "../types";
+import { searchCustomerOptions } from "../api/customers";
+import type { AnalyticsFilters, SaleListItem, ProductOption, Category, CustomerListItem } from "../types";
 
 const PIE_COLORS = ["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#0891b2"];
 
@@ -22,8 +23,21 @@ const EMPTY_FILTERS: AnalyticsFilters = {
   brand: "",
   sales_channel: "",
   payment_method: "",
+  customer_id: "",
   granularity: "daily",
 };
+
+function toISODate(d: Date) {
+  return d.toISOString().slice(0, 10);
+}
+
+const DATE_PRESETS: { label: string; range: () => [string, string] }[] = [
+  { label: "Today", range: () => { const t = new Date(); return [toISODate(t), toISODate(t)]; } },
+  { label: "Last 7 Days", range: () => { const t = new Date(); const s = new Date(); s.setDate(t.getDate() - 6); return [toISODate(s), toISODate(t)]; } },
+  { label: "Last 30 Days", range: () => { const t = new Date(); const s = new Date(); s.setDate(t.getDate() - 29); return [toISODate(s), toISODate(t)]; } },
+  { label: "This Month", range: () => { const t = new Date(); const s = new Date(t.getFullYear(), t.getMonth(), 1); return [toISODate(s), toISODate(t)]; } },
+  { label: "Last Month", range: () => { const t = new Date(); const s = new Date(t.getFullYear(), t.getMonth() - 1, 1); const e = new Date(t.getFullYear(), t.getMonth(), 0); return [toISODate(s), toISODate(e)]; } },
+];
 
 function money(n: number) {
   return `₹${Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
@@ -65,6 +79,8 @@ export default function Analytics() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [brands, setBrands] = useState<string[]>([]);
   const [products, setProducts] = useState<ProductOption[]>([]);
+  const [customerOptions, setCustomerOptions] = useState<CustomerListItem[]>([]);
+  const [topProductsSort, setTopProductsSort] = useState<"revenue" | "quantity_sold">("revenue");
   const [drillDown, setDrillDown] = useState<DrillDown>(null);
   const [drillSales, setDrillSales] = useState<SaleListItem[] | null>(null);
   const [drillLoading, setDrillLoading] = useState(false);
@@ -74,6 +90,7 @@ export default function Analytics() {
     listCategories().then(setCategories).catch(() => setCategories([]));
     listInventoryBrands().then(setBrands).catch(() => setBrands([]));
     listProductOptions().then(setProducts).catch(() => setProducts([]));
+    searchCustomerOptions("").then((res) => setCustomerOptions(res.items)).catch(() => setCustomerOptions([]));
   }, []);
 
   // "Dashboard Viewed" — logged once per visit, not on every refetch.
@@ -98,6 +115,11 @@ export default function Analytics() {
   const updateFilter = (key: keyof AnalyticsFilters, value: string) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
     logAnalyticsEvent("Dashboard Filters Applied", `${key}=${value || "(cleared)"}`).catch(() => {});
+  };
+
+  const applyDatePreset = (label: string, range: [string, string]) => {
+    setFilters((prev) => ({ ...prev, date_from: range[0], date_to: range[1] }));
+    logAnalyticsEvent("Dashboard Filters Applied", `date_preset=${label}`).catch(() => {});
   };
 
   const resetFilters = () => setFilters(EMPTY_FILTERS);
@@ -126,6 +148,11 @@ export default function Analytics() {
 
   const kpis = summary?.kpis;
 
+  const sortedTopProducts = useMemo(() => {
+    if (!summary?.top_products) return [];
+    return [...summary.top_products].sort((a, b) => b[topProductsSort] - a[topProductsSort]).slice(0, 10);
+  }, [summary?.top_products, topProductsSort]);
+
   return (
     <div className="p-6">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
@@ -147,7 +174,19 @@ export default function Analytics() {
       </div>
 
       {/* Filters */}
-      <div className="mb-6 grid grid-cols-2 gap-3 rounded-lg bg-white p-4 shadow-sm sm:grid-cols-3 lg:grid-cols-7">
+      <div className="mb-3 flex flex-wrap gap-2">
+        {DATE_PRESETS.map((p) => (
+          <button
+            key={p.label}
+            type="button"
+            className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-600 hover:border-brand-500 hover:text-brand-600"
+            onClick={() => applyDatePreset(p.label, p.range())}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+      <div className="mb-6 grid grid-cols-2 gap-3 rounded-lg bg-white p-4 shadow-sm sm:grid-cols-3 lg:grid-cols-8">
         <div>
           <label className="form-label">From</label>
           <input type="date" className="form-input" value={filters.date_from}
@@ -203,7 +242,15 @@ export default function Analytics() {
             <option value="BANK_TRANSFER">Bank Transfer</option>
           </select>
         </div>
-        <div className="col-span-2 flex items-end sm:col-span-3 lg:col-span-7">
+        <div>
+          <label className="form-label">Customer</label>
+          <select className="form-input" value={filters.customer_id}
+            onChange={(e) => updateFilter("customer_id", e.target.value)}>
+            <option value="">All Customers</option>
+            {customerOptions.map((c) => <option key={c.id} value={c.id}>{c.full_name}</option>)}
+          </select>
+        </div>
+        <div className="col-span-2 flex items-end sm:col-span-3 lg:col-span-8">
           <button type="button" className="text-sm font-medium text-brand-600 hover:underline" onClick={resetFilters}>
             Clear all filters
           </button>
@@ -226,6 +273,8 @@ export default function Analytics() {
               onClick={() => openSalesDrilldown("Sales — Products Sold")} />
             <KpiCard label="Avg. Order Value" value={money(kpis?.average_order_value ?? 0)}
               onClick={() => openSalesDrilldown("Sales — Average Order Value")} />
+            <KpiCard label="Total Discount" value={money(kpis?.total_discount ?? 0)} />
+            <KpiCard label="Total Tax" value={money(kpis?.total_tax ?? 0)} />
             <KpiCard label="Inventory Value" value={money(kpis?.total_inventory_value ?? 0)} />
             <KpiCard label="Low Stock Products" value={String(kpis?.low_stock_products ?? 0)}
               onClick={() => setDrillDown({ kind: "low_stock", title: "Low Stock Products" })} />
@@ -264,16 +313,23 @@ export default function Analytics() {
             </div>
 
             <div className="rounded-lg bg-white p-5 shadow-sm">
-              <h3 className="mb-3 text-sm font-semibold text-slate-700">Top 10 Best Selling Products</h3>
-              {!summary?.top_products.length ? <EmptyState /> : (
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-slate-700">Top 10 Best Selling Products</h3>
+                <select className="form-input w-40 py-1.5 text-xs" value={topProductsSort}
+                  onChange={(e) => setTopProductsSort(e.target.value as "revenue" | "quantity_sold")}>
+                  <option value="revenue">By Revenue</option>
+                  <option value="quantity_sold">By Quantity Sold</option>
+                </select>
+              </div>
+              {!sortedTopProducts.length ? <EmptyState /> : (
                 <ResponsiveContainer width="100%" height={280}>
-                  <BarChart data={summary.top_products} layout="vertical" margin={{ left: 8, right: 16 }}>
+                  <BarChart data={sortedTopProducts} layout="vertical" margin={{ left: 8, right: 16 }}>
                     <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
                     <XAxis type="number" tick={{ fontSize: 11 }} />
                     <YAxis type="category" dataKey="product_name" width={110} tick={{ fontSize: 11 }} />
-                    <Tooltip formatter={(v: number) => money(v)} />
+                    <Tooltip formatter={(v: number) => (topProductsSort === "revenue" ? money(v) : v)} />
                     <Bar
-                      dataKey="revenue" fill="#2563eb" radius={[0, 4, 4, 0]} barSize={14}
+                      dataKey={topProductsSort} fill="#2563eb" radius={[0, 4, 4, 0]} barSize={14}
                       onClick={(row: any) => openSalesDrilldown(`Sales — ${row.product_name}`, { product_id: row.product_id })}
                       cursor="pointer"
                     />
@@ -306,7 +362,8 @@ export default function Analytics() {
               {!summary?.by_payment_method.length ? <EmptyState /> : (
                 <ResponsiveContainer width="100%" height={240}>
                   <PieChart>
-                    <Pie data={summary.by_payment_method} dataKey="revenue" nameKey="payment_method" outerRadius={80} label>
+                    <Pie data={summary.by_payment_method} dataKey="revenue" nameKey="payment_method" outerRadius={80}
+                      label={(entry: any) => `${entry.payment_method} · ${entry.orders} txns`}>
                       {summary.by_payment_method.map((_row, i) => (
                         <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
                       ))}
@@ -334,6 +391,34 @@ export default function Analytics() {
                 </ResponsiveContainer>
               )}
             </div>
+          </div>
+
+          {/* Customer Revenue Analysis */}
+          <h2 className="mb-3 mt-8 text-lg font-semibold text-slate-800">Customer Revenue Analysis</h2>
+          <div className="overflow-x-auto rounded-lg bg-white shadow-sm">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 text-slate-500">
+                  <th className="p-3 font-medium">Customer</th>
+                  <th className="p-3 font-medium">Orders</th>
+                  <th className="p-3 font-medium">Total Spend</th>
+                  <th className="p-3 font-medium">Avg Order Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!summary?.customer_revenue.length && (
+                  <tr><td colSpan={4} className="p-6 text-center text-slate-400">No sales for the selected period.</td></tr>
+                )}
+                {summary?.customer_revenue.map((row) => (
+                  <tr key={row.customer_id ?? row.customer_name} className="border-b border-slate-50 last:border-0 hover:bg-slate-50">
+                    <td className="p-3 font-medium text-slate-800">{row.customer_name}</td>
+                    <td className="p-3 text-slate-600">{row.orders}</td>
+                    <td className="p-3 font-semibold text-slate-900">{money(row.total_spend)}</td>
+                    <td className="p-3 text-slate-600">{money(row.average_order_value)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
 
           {/* Inventory Analytics */}

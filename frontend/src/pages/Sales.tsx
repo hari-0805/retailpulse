@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { useForm, useFieldArray } from "react-hook-form";
 import {
-  listSales, getSale, createSale, updateSale, deleteSale,
+  listSales, getSale, createSale, updateSale, deleteSale, exportInvoice,
 } from "../api/sales";
 import { listProductOptions } from "../api/products";
 import { listCategories } from "../api/categories";
 import { searchCustomerOptions } from "../api/customers";
 import type {
-  Sale, SaleListItem, SalePayload, ProductOption, Category, SalesChannel, PaymentMethod, CustomerListItem,
+  Sale, SaleListItem, SalePayload, ProductOption, Category, SalesChannel, PaymentMethod, PaymentStatus, CustomerListItem,
 } from "../types";
 import Modal from "../components/Modal";
 
@@ -26,6 +26,20 @@ const PAYMENT_LABEL: Record<PaymentMethod, string> = {
   BANK_TRANSFER: "Bank Transfer",
 };
 
+const PAYMENT_STATUS_LABEL: Record<PaymentStatus, string> = {
+  PENDING: "Pending",
+  PAID: "Paid",
+  PARTIALLY_PAID: "Partially Paid",
+  REFUNDED: "Refunded",
+};
+
+const PAYMENT_STATUS_STYLES: Record<PaymentStatus, string> = {
+  PENDING: "bg-amber-50 text-amber-700",
+  PAID: "bg-emerald-50 text-emerald-700",
+  PARTIALLY_PAID: "bg-sky-50 text-sky-700",
+  REFUNDED: "bg-red-50 text-red-700",
+};
+
 export default function Sales() {
   const [sales, setSales] = useState<SaleListItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -37,7 +51,8 @@ export default function Sales() {
   const [categoryFilter, setCategoryFilter] = useState("");
   const [channelFilter, setChannelFilter] = useState<SalesChannel | "">("");
   const [paymentFilter, setPaymentFilter] = useState<PaymentMethod | "">("");
-  const [sortBy, setSortBy] = useState<"date" | "invoice" | "total">("date");
+  const [statusFilter, setStatusFilter] = useState<PaymentStatus | "">("");
+  const [sortBy, setSortBy] = useState<"date" | "invoice" | "total" | "customer">("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
 
@@ -69,6 +84,7 @@ export default function Sales() {
         category_id: categoryFilter || undefined,
         sales_channel: channelFilter || undefined,
         payment_method: paymentFilter || undefined,
+        payment_status: statusFilter || undefined,
         sort_by: sortBy,
         sort_dir: sortDir,
         page,
@@ -89,7 +105,7 @@ export default function Sales() {
     const timeout = setTimeout(loadSales, 350);
     return () => clearTimeout(timeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, dateFrom, dateTo, categoryFilter, channelFilter, paymentFilter, sortBy, sortDir, page]);
+  }, [search, dateFrom, dateTo, categoryFilter, channelFilter, paymentFilter, statusFilter, sortBy, sortDir, page]);
 
   const handleSaved = (message: string) => {
     setModalOpen(false);
@@ -193,9 +209,17 @@ export default function Sales() {
         </select>
         <select
           className="form-input w-auto"
+          value={statusFilter}
+          onChange={(e) => { setPage(1); setStatusFilter(e.target.value as PaymentStatus | ""); }}
+        >
+          <option value="">All Payment Statuses</option>
+          {Object.entries(PAYMENT_STATUS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+        <select
+          className="form-input w-auto"
           value={`${sortBy}:${sortDir}`}
           onChange={(e) => {
-            const [by, dir] = e.target.value.split(":") as ["date" | "invoice" | "total", "asc" | "desc"];
+            const [by, dir] = e.target.value.split(":") as ["date" | "invoice" | "total" | "customer", "asc" | "desc"];
             setSortBy(by); setSortDir(dir);
           }}
         >
@@ -204,6 +228,8 @@ export default function Sales() {
           <option value="invoice:asc">Invoice (A–Z)</option>
           <option value="total:desc">Total (High–Low)</option>
           <option value="total:asc">Total (Low–High)</option>
+          <option value="customer:asc">Customer (A–Z)</option>
+          <option value="customer:desc">Customer (Z–A)</option>
         </select>
       </div>
 
@@ -217,16 +243,21 @@ export default function Sales() {
               <th className="px-4 py-3">Items</th>
               <th className="px-4 py-3">Channel</th>
               <th className="px-4 py-3">Payment</th>
+              <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Total</th>
               <th className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {isLoading && (
-              <tr><td colSpan={8} className="px-4 py-6 text-center text-slate-400">Loading...</td></tr>
-            )}
+            {isLoading && Array.from({ length: 6 }).map((_, i) => (
+              <tr key={`skeleton-${i}`} className="border-b border-slate-100 last:border-0">
+                {Array.from({ length: 9 }).map((_, j) => (
+                  <td key={j} className="px-4 py-3"><div className="h-4 w-full max-w-[110px] animate-pulse rounded bg-slate-100" /></td>
+                ))}
+              </tr>
+            ))}
             {!isLoading && sales.length === 0 && (
-              <tr><td colSpan={8} className="px-4 py-6 text-center text-slate-400">No sales found.</td></tr>
+              <tr><td colSpan={9} className="px-4 py-6 text-center text-slate-400">No sales found.</td></tr>
             )}
             {sales.map((sale) => (
               <tr key={sale.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
@@ -236,6 +267,11 @@ export default function Sales() {
                 <td className="px-4 py-3 text-slate-600">{sale.item_count}</td>
                 <td className="px-4 py-3 text-slate-600">{CHANNEL_LABEL[sale.sales_channel]}</td>
                 <td className="px-4 py-3 text-slate-600">{PAYMENT_LABEL[sale.payment_method]}</td>
+                <td className="px-4 py-3">
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${PAYMENT_STATUS_STYLES[sale.payment_status]}`}>
+                    {PAYMENT_STATUS_LABEL[sale.payment_status]}
+                  </span>
+                </td>
                 <td className="px-4 py-3 font-medium text-slate-900">₹{Number(sale.total_amount).toFixed(2)}</td>
                 <td className="px-4 py-3 text-right">
                   <button className="mr-3 text-sm font-medium text-slate-600 hover:underline" onClick={() => openView(sale.id)}>
@@ -243,6 +279,12 @@ export default function Sales() {
                   </button>
                   <button className="mr-3 text-sm font-medium text-brand-500 hover:underline" onClick={() => openEdit(sale.id)}>
                     Edit
+                  </button>
+                  <button
+                    className="mr-3 text-sm font-medium text-slate-600 hover:underline"
+                    onClick={() => exportInvoice(sale.id, sale.invoice_number, "pdf")}
+                  >
+                    Invoice
                   </button>
                   <button className="text-sm font-medium text-red-600 hover:underline" onClick={() => setDeleteTarget(sale)}>
                     Delete
@@ -308,8 +350,20 @@ function SaleDetailModal({ sale, onClose }: { sale: Sale; onClose: () => void })
         <div><span className="block text-xs text-slate-500">Sale Date</span>{new Date(sale.sale_date).toLocaleString()}</div>
         <div><span className="block text-xs text-slate-500">Sales Channel</span>{CHANNEL_LABEL[sale.sales_channel]}</div>
         <div><span className="block text-xs text-slate-500">Payment Method</span>{PAYMENT_LABEL[sale.payment_method]}</div>
-        <div><span className="block text-xs text-slate-500">Recorded By</span>{sale.creator?.name ?? "—"}</div>
+        <div>
+          <span className="block text-xs text-slate-500">Payment Status</span>
+          <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${PAYMENT_STATUS_STYLES[sale.payment_status]}`}>
+            {PAYMENT_STATUS_LABEL[sale.payment_status]}
+          </span>
+        </div>
+        <div><span className="block text-xs text-slate-500">Salesperson</span>{sale.creator?.name ?? "—"}</div>
       </div>
+
+      {sale.notes && (
+        <div className="mb-4 rounded-md bg-slate-50 p-3 text-sm text-slate-600">
+          <span className="block text-xs font-medium text-slate-500">Notes</span>{sale.notes}
+        </div>
+      )}
 
       <div className="overflow-x-auto rounded-lg border border-slate-200">
         <table className="w-full text-left text-sm">
@@ -349,7 +403,9 @@ function SaleDetailModal({ sale, onClose }: { sale: Sale; onClose: () => void })
         </div>
       </div>
 
-      <div className="mt-6 flex justify-end">
+      <div className="mt-6 flex justify-end gap-2">
+        <button className="btn-outline" onClick={() => exportInvoice(sale.id, sale.invoice_number, "csv")}>Export CSV</button>
+        <button className="btn-outline" onClick={() => exportInvoice(sale.id, sale.invoice_number, "pdf")}>Export PDF</button>
         <button className="btn-outline" onClick={onClose}>Close</button>
       </div>
     </Modal>
@@ -363,6 +419,8 @@ interface SaleFormValues {
   sale_date: string;
   sales_channel: SalesChannel;
   payment_method: PaymentMethod;
+  payment_status: PaymentStatus;
+  notes: string;
   items: {
     product_id: string;
     quantity: number;
@@ -404,6 +462,8 @@ function SaleFormModal({
           sale_date: toDatetimeLocal(sale.sale_date),
           sales_channel: sale.sales_channel,
           payment_method: sale.payment_method,
+          payment_status: sale.payment_status,
+          notes: sale.notes ?? "",
           items: sale.items.map((i) => ({
             product_id: i.product.id,
             quantity: i.quantity,
@@ -417,12 +477,29 @@ function SaleFormModal({
           sale_date: "",
           sales_channel: "RETAIL_STORE",
           payment_method: "CASH",
+          payment_status: "PAID",
+          notes: "",
           items: [{ product_id: "", quantity: 1, unit_price: 0, discount: 0, tax: 0 }],
         },
   });
 
   const { fields, append, remove } = useFieldArray({ control, name: "items" });
   const watchedItems = watch("items");
+
+  // When editing, this sale's own items already deducted stock in the DB,
+  // so the live product list under-reports what's truly available for
+  // those specific lines. Add each line's original quantity back so the
+  // max-stock check reflects reality instead of falsely blocking edits.
+  const originalQuantityByProduct: Record<string, number> = {};
+  if (sale) {
+    for (const item of sale.items) {
+      originalQuantityByProduct[item.product.id] = (originalQuantityByProduct[item.product.id] ?? 0) + item.quantity;
+    }
+  }
+  const availableStockFor = (productId: string, product?: ProductOption) => {
+    if (!product) return 0;
+    return product.stock_quantity + (isEdit ? (originalQuantityByProduct[productId] ?? 0) : 0);
+  };
 
   const handleProductChange = (index: number, productId: string) => {
     const product = products.find((p) => p.id === productId);
@@ -432,13 +509,20 @@ function SaleFormModal({
     }
   };
 
-  const grandTotal = watchedItems.reduce((sum, item) => {
-    const qty = Number(item.quantity) || 0;
-    const price = Number(item.unit_price) || 0;
-    const discount = Number(item.discount) || 0;
-    const tax = Number(item.tax) || 0;
-    return sum + (qty * price - discount + tax);
-  }, 0);
+  const billing = watchedItems.reduce(
+    (acc, item) => {
+      const qty = Number(item.quantity) || 0;
+      const price = Number(item.unit_price) || 0;
+      const discount = Number(item.discount) || 0;
+      const tax = Number(item.tax) || 0;
+      acc.subtotal += qty * price;
+      acc.discount += discount;
+      acc.tax += tax;
+      return acc;
+    },
+    { subtotal: 0, discount: 0, tax: 0 },
+  );
+  const grandTotal = billing.subtotal - billing.discount + billing.tax;
 
   const onSubmit = async (data: SaleFormValues) => {
     setServerError(null);
@@ -457,6 +541,8 @@ function SaleFormModal({
       sale_date: data.sale_date ? new Date(data.sale_date).toISOString() : undefined,
       sales_channel: data.sales_channel,
       payment_method: data.payment_method,
+      payment_status: data.payment_status,
+      notes: data.notes || undefined,
       items: data.items.map((i) => ({
         product_id: i.product_id,
         quantity: Number(i.quantity),
@@ -552,6 +638,17 @@ function SaleFormModal({
               {Object.entries(PAYMENT_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
           </div>
+          <div>
+            <label className="form-label">Payment Status</label>
+            <select className="form-input" {...register("payment_status")}>
+              {Object.entries(PAYMENT_STATUS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div className="mt-4">
+          <label className="form-label">Notes</label>
+          <textarea className="form-input" rows={2} placeholder="Optional notes about this sale" {...register("notes")} />
         </div>
 
         <div className="mt-6 mb-2 flex items-center justify-between">
@@ -583,16 +680,35 @@ function SaleFormModal({
                     ))}
                   </select>
                   {selectedProduct && (
-                    <span className="mt-1 block text-xs text-slate-500">Category: {selectedProduct.category.name}</span>
+                    <span className="mt-1 block text-xs text-slate-500">
+                      SKU: {selectedProduct.sku} · Category: {selectedProduct.category.name} ·{" "}
+                      Available Stock: <strong>{availableStockFor(selectedProduct.id, selectedProduct)}</strong>
+                    </span>
                   )}
                 </div>
                 <div>
                   <label className="form-label">Qty</label>
                   <input
                     type="number" min={1}
-                    className="form-input"
-                    {...register(`items.${index}.quantity`, { required: true, valueAsNumber: true, min: 1 })}
+                    className={`form-input ${errors.items?.[index]?.quantity ? "input-error" : ""}`}
+                    {...register(`items.${index}.quantity`, {
+                      required: "Quantity is required",
+                      valueAsNumber: true,
+                      validate: (value) => {
+                        if (value === undefined || Number.isNaN(value)) return "Quantity is required";
+                        if (value <= 0) return "Quantity must be greater than zero";
+                        const productId = watchedItems[index]?.product_id;
+                        const product = products.find((p) => p.id === productId);
+                        if (!product) return true; // product-required error handled separately
+                        const available = availableStockFor(productId, product);
+                        if (value > available) return `Only ${available} units available in stock`;
+                        return true;
+                      },
+                    })}
                   />
+                  {errors.items?.[index]?.quantity && (
+                    <span className="mt-1 block text-xs text-red-600">{errors.items[index]?.quantity?.message}</span>
+                  )}
                 </div>
                 <div>
                   <label className="form-label">Unit Price</label>
@@ -635,8 +751,13 @@ function SaleFormModal({
           })}
         </div>
 
-        <div className="mt-4 text-right text-lg font-bold text-slate-900">
-          Total: ₹{grandTotal.toFixed(2)}
+        <div className="mt-4 ml-auto max-w-xs space-y-1 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm">
+          <div className="flex justify-between"><span className="text-slate-500">Subtotal</span><span>₹{billing.subtotal.toFixed(2)}</span></div>
+          <div className="flex justify-between"><span className="text-slate-500">Discount</span><span>-₹{billing.discount.toFixed(2)}</span></div>
+          <div className="flex justify-between"><span className="text-slate-500">Tax</span><span>+₹{billing.tax.toFixed(2)}</span></div>
+          <div className="flex justify-between border-t border-slate-200 pt-1 text-base font-bold text-slate-900">
+            <span>Grand Total</span><span>₹{grandTotal.toFixed(2)}</span>
+          </div>
         </div>
 
         <div className="mt-6 flex justify-end gap-3">
