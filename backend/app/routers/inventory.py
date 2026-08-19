@@ -323,6 +323,7 @@ def adjust_stock(
         entity_name=product.name,
         details=f"{movement_type.value}: {delta:+d} (now {new_current})",
     )
+    db.commit()
 
     return _serialize_inventory(inventory)
 
@@ -354,5 +355,6 @@ def update_reorder_level(
         entity_name=product.name,
         details=f"Reorder level set to {payload.reorder_level}",
     )
+    db.commit()
 
     return _serialize_inventory(inventory)

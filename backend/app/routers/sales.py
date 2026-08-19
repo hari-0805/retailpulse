@@ -325,7 +325,7 @@ def create_sale(
     product_names = [p.name for p in products_cache.values()]
     log_action(db, request, "Sale Created", company_id=company_id, user_id=current_user.id,
                entity_name=f"{invoice_number} ({', '.join(product_names)})")
-
+    db.commit()
 
     return db.query(Sale).options(
         joinedload(Sale.items).joinedload(SaleItem.product),
@@ -450,7 +450,7 @@ def update_sale(
 
     log_action(db, request, "Sale Updated", company_id=company_id,
                user_id=current_user.id, entity_name=sale.invoice_number)
-
+    db.commit()
 
     return db.query(Sale).options(
         joinedload(Sale.items).joinedload(SaleItem.product),
@@ -494,6 +494,6 @@ def delete_sale(
     if products_cache:
         log_action(db, request, "Inventory Updated", company_id=company_id,
                    user_id=current_user.id, entity_name=invoice_number)
-
+    db.commit()
 
     return None

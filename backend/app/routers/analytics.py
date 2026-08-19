@@ -255,6 +255,7 @@ def analytics_audit_event(
         company_id=company_id, user_id=current_user.id,
         details=payload.details,
     )
+    db.commit()
 
 
 @router.get("/export")
@@ -282,6 +283,7 @@ def export_analytics(
         company_id=company_id, user_id=current_user.id,
         details=f"format={format}",
     )
+    db.commit()
 
     if format == "csv":
         buffer = io.StringIO()

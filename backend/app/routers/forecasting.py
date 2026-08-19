@@ -83,6 +83,7 @@ def generate(
     log_action(db, request, "Inventory Recommendation Generated", company_id=company_id, user_id=current_user.id,
                entity_name=f"{payload.forecast_period.value}",
                details=f"{result['products_forecasted']} product recommendations refreshed")
+    db.commit()
 
     return ForecastGenerateResponse(**result)
 
@@ -311,6 +312,7 @@ def export_forecasts(
 
     log_action(db, request, "Forecast Exported", company_id=company_id, user_id=current_user.id,
                entity_name=f"{report}/{forecast_period.value}", details=f"format={format}, count={len(data_rows)}")
+    db.commit()
 
     if format == "csv":
         buffer = io.StringIO()

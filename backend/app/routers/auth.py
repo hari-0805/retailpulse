@@ -63,6 +63,7 @@ def register(payload: CompanyRegisterRequest, request: Request, db: Session = De
 
     tokens = _issue_tokens(db, user)
     log_action(db, request, action="COMPANY_REGISTERED", company_id=company.id, user_id=user.id)
+    db.commit()
 
     return RegisterResponse(company=company, user=user, tokens=tokens)
 
@@ -79,6 +80,7 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
 
     tokens = _issue_tokens(db, user)
     log_action(db, request, action="LOGIN", company_id=user.company_id, user_id=user.id)
+    db.commit()
     return tokens
 
 

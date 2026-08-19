@@ -75,6 +75,7 @@ def create_category(
 
     log_action(db, request, "Category Created", company_id=company_id,
                user_id=current_user.id, entity_name=category.name)
+    db.commit()
 
     return _serialize(category, 0)
 
@@ -113,6 +114,7 @@ def update_category(
 
     log_action(db, request, "Category Updated", company_id=company_id,
                user_id=current_user.id, entity_name=category.name)
+    db.commit()
 
     return _serialize(category, product_count or 0)
 
@@ -145,5 +147,6 @@ def delete_category(
 
     log_action(db, request, "Category Deleted", company_id=company_id,
                user_id=current_user.id, entity_name=category_name)
+    db.commit()
 
     return None

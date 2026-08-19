@@ -22,6 +22,13 @@ def log_action(
     entity_name: Optional[str] = None,
     details: Optional[str] = None,
 ):
+    """
+    Adds the audit entry to the session but does NOT commit — it's meant to
+    ride along in the same transaction as whatever operation it's logging,
+    so a later failure in that operation rolls the audit entry back too
+    instead of leaving an orphaned log for something that didn't happen.
+    Callers are responsible for committing (see note below).
+    """
     entry = AuditLog(
         company_id=company_id,
         user_id=user_id,
@@ -32,4 +39,3 @@ def log_action(
         browser=request.headers.get("user-agent", "unknown"),
     )
     db.add(entry)
-    db.commit()

@@ -135,6 +135,7 @@ def create_product(
 
     log_action(db, request, "Product Created", company_id=company_id,
                user_id=current_user.id, entity_name=product.name)
+    db.commit()
 
     return product
 
@@ -243,6 +244,7 @@ def update_product(
         log_action(db, request, action, company_id=company_id,
                    user_id=current_user.id, entity_name=product.name)
 
+    db.commit()
     return product
 
 
@@ -268,6 +270,7 @@ def toggle_product_status(
     action = "Product Activated" if new_status == ProductStatus.ACTIVE else "Product Deactivated"
     log_action(db, request, action, company_id=company_id,
                user_id=current_user.id, entity_name=product.name)
+    db.commit()
 
     return product
 
@@ -292,5 +295,6 @@ def delete_product(
 
     log_action(db, request, "Product Deleted", company_id=company_id,
                user_id=current_user.id, entity_name=product_name)
+    db.commit()
 
     return None

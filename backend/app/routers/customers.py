@@ -197,6 +197,7 @@ def create_customer(
 
     log_action(db, request, "Customer Created", company_id=company_id, user_id=current_user.id,
                entity_name=f"{customer.customer_code} ({customer.full_name})")
+    db.commit()
 
     return _get_customer_or_404(db, company_id, customer.id)
 
@@ -228,6 +229,7 @@ def export_customers(
 
     log_action(db, request, "Customer Exported", company_id=company_id, user_id=current_user.id,
                details=f"format={format}, count={len(rows)}")
+    db.commit()
 
     headers = ["Customer ID", "Name", "Email", "Phone", "Type", "Status", "Segment",
                "City", "State", "Country", "Total Orders", "Total Revenue", "Last Purchase", "Customer Since"]
@@ -476,6 +478,7 @@ def export_customer_analytics(
 
     log_action(db, request, "Customer Exported", company_id=company_id, user_id=current_user.id,
                details=f"format={format}, report=customer_analytics")
+    db.commit()
 
     if format == "csv":
         buffer = io.StringIO()
@@ -554,6 +557,7 @@ def export_top_customers(
 
     log_action(db, request, "Customer Exported", company_id=company_id, user_id=current_user.id,
                details=f"format={format}, report=top_customers")
+    db.commit()
 
     headers = ["Rank", "Customer Code", "Name", "Total Orders", "Total Revenue", "Avg Order Value"]
 
@@ -677,6 +681,7 @@ def update_customer(
 
     log_action(db, request, "Customer Updated", company_id=company_id, user_id=current_user.id,
                entity_name=f"{customer.customer_code} ({customer.full_name})")
+    db.commit()
 
     return _get_customer_or_404(db, company_id, customer.id)
 
@@ -710,6 +715,7 @@ def update_customer_status(
 
     log_action(db, request, audit_action, company_id=company_id, user_id=current_user.id,
                entity_name=f"{customer.customer_code} ({customer.full_name})")
+    db.commit()
 
     return _get_customer_or_404(db, company_id, customer.id)
 
@@ -729,6 +735,7 @@ def delete_customer(
     db.commit()
 
     log_action(db, request, "Customer Deleted", company_id=company_id, user_id=current_user.id, entity_name=label)
+    db.commit()
     return None
 
 
