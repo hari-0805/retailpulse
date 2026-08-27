@@ -18,6 +18,7 @@ import Customers from "./pages/Customers";
 import CustomerProfile from "./pages/CustomerProfile";
 import CustomerAnalytics from "./pages/CustomerAnalytics";
 import Forecasting from "./pages/Forecasting";
+import InventoryForecast from "./pages/InventoryForecast";
 
 const queryClient = new QueryClient();
 
@@ -54,6 +55,7 @@ export default function App() {
                 <Route path="/customers/:customerId" element={<CustomerProfile />} />
                 <Route path="/customer-analytics" element={<CustomerAnalytics />} />
                 <Route path="/forecasting" element={<Forecasting />} />
+                <Route path="/inventory/forecast" element={<InventoryForecast />} />
               </Route>
             </Route>
 

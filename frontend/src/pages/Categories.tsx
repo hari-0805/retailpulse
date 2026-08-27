@@ -158,7 +158,7 @@ export default function Categories() {
         <Modal title="Delete category" onClose={() => setDeleteTarget(null)}>
           <p className="text-sm text-slate-600">
             Are you sure you want to delete <strong>{deleteTarget.name}</strong>?
-            {deleteTarget.product_count > 0 && (
+            {(deleteTarget.product_count ?? 0) > 0 && (
               <span className="mt-2 block text-red-600">
                 This category has {deleteTarget.product_count} product(s) — deletion will be blocked until they're reassigned or removed.
               </span>

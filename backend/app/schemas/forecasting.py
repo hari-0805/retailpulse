@@ -4,7 +4,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from app.models import ForecastPeriod, RecommendationType
+from app.models import ForecastPeriod, RecommendationType, StockRisk
 
 
 class ForecastGenerateRequest(BaseModel):
@@ -66,7 +66,7 @@ class ForecastGenerateResponse(BaseModel):
     skipped_no_history: int
 
 
-# ---------- Analytics dashboard ----------
+# ---------- Analytics dashboard (Task 7) ----------
 
 class ForecastKPIs(BaseModel):
     total_predicted_demand: int
@@ -122,3 +122,53 @@ class RecommendationRow(BaseModel):
     reorder_level: Optional[int] = None
     predicted_demand: int
     recommendation: RecommendationType
+
+
+# ---------- Task 11: Inventory Forecasting & Smart Replenishment ----------
+
+class InventoryForecastRow(BaseModel):
+    forecast_id: str
+    product_id: str
+    product_name: str
+    sku: str
+    category_name: str
+    supplier: Optional[str] = None
+    current_stock: int
+    avg_daily_sales: Decimal
+    forecasted_demand: int
+    days_of_stock_remaining: Optional[Decimal] = None  # None == effectively infinite (no sales velocity)
+    reorder_point: int
+    recommended_reorder_quantity: int
+    stock_risk: StockRisk
+    generated_at: datetime
+
+
+class InventoryForecastListResponse(BaseModel):
+    items: list[InventoryForecastRow]
+    total: int
+
+
+class InventoryForecastSummary(BaseModel):
+    products_requiring_reorder: int
+    products_at_stockout_risk: int
+    overstocked_products: int
+    healthy_products: int
+    out_of_stock_products: int
+
+
+class ComparisonMetric(BaseModel):
+    metric: str
+    current: Decimal
+    recommended: Decimal
+    action_required: bool
+
+
+class InventoryForecastDetail(BaseModel):
+    forecast: InventoryForecastRow
+    comparison: list[ComparisonMetric]
+    lead_time_days: int
+    safety_stock: int
+    # Historical daily-sales points feeding the forecast, and the
+    # forecasted demand curve — used for the required visualization.
+    historical_demand: list[ProductDemandTrendPoint]
+    forecasted_demand_curve: list[ProductDemandTrendPoint]

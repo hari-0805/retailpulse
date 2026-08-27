@@ -19,10 +19,26 @@ class ForecastPeriod(str, enum.Enum):
 
 
 class RecommendationType(str, enum.Enum):
+    """Task 7's original 4-tier recommendation, still used by the Demand
+    Forecasting dashboard/notifications/export flow. Left untouched so that
+    module keeps working exactly as before."""
     REORDER_SOON = "REORDER_SOON"
     OVERSTOCK_RISK = "OVERSTOCK_RISK"
     STOCK_HEALTHY = "STOCK_HEALTHY"
     IMMEDIATE_RESTOCK_REQUIRED = "IMMEDIATE_RESTOCK_REQUIRED"
+
+
+class StockRisk(str, enum.Enum):
+    """Task 11's 5-tier supply-chain risk classification. Separate from
+    RecommendationType because it's driven by a different, more granular
+    formula (reorder point / lead time / safety stock) and the Inventory
+    Forecast dashboard needs the finer distinction between 'about to run
+    out' (STOCKOUT_RISK) and 'already at zero' (OUT_OF_STOCK)."""
+    OUT_OF_STOCK = "OUT_OF_STOCK"
+    STOCKOUT_RISK = "STOCKOUT_RISK"
+    LOW_STOCK = "LOW_STOCK"
+    HEALTHY = "HEALTHY"
+    OVERSTOCK = "OVERSTOCK"
 
 
 class DemandForecast(Base):
@@ -32,6 +48,10 @@ class DemandForecast(Base):
     category_id set. Re-generating a forecast for the same
     product/category + forecast_period updates this row in place
     (see app/services/forecasting.py) rather than creating a duplicate.
+
+    Task 11 adds the supply-chain replenishment fields (avg_daily_sales
+    through stock_risk) onto this same table rather than a parallel one,
+    since it's computed in the same generation pass as everything else.
     """
     __tablename__ = "demand_forecasts"
 
@@ -54,6 +74,16 @@ class DemandForecast(Base):
     current_stock = Column(Integer, nullable=True)
     reorder_level = Column(Integer, nullable=True)
     recommendation = Column(SAEnum(RecommendationType), nullable=True)
+
+    # ---- Task 11: Inventory Forecasting & Smart Replenishment ----
+    avg_daily_sales = Column(Numeric(10, 4), nullable=True)
+    # NULL means "infinite" (zero average daily sales, so stock never runs out).
+    days_of_stock_remaining = Column(Numeric(10, 2), nullable=True)
+    lead_time_days = Column(Integer, nullable=True)
+    safety_stock = Column(Integer, nullable=True)
+    reorder_point = Column(Integer, nullable=True)
+    recommended_reorder_quantity = Column(Integer, nullable=True)
+    stock_risk = Column(SAEnum(StockRisk), nullable=True)
 
     generated_by = Column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     generated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

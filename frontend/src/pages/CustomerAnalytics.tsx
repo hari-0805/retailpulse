@@ -116,7 +116,7 @@ export default function CustomerAnalytics() {
                 <Pie data={summary.revenue_by_type} dataKey="revenue" nameKey="customer_type" outerRadius={80} label>
                   {summary.revenue_by_type.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
                 </Pie>
-                <Tooltip formatter={(v: number) => money(v)} />
+                <Tooltip formatter={(v: any) => money(Number(v))} />
                 <Legend />
               </PieChart>
             </ResponsiveContainer>
@@ -130,7 +130,7 @@ export default function CustomerAnalytics() {
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis type="number" tick={{ fontSize: 11 }} />
                 <YAxis type="category" dataKey="full_name" tick={{ fontSize: 10 }} width={100} />
-                <Tooltip formatter={(v: number) => money(v)} />
+                <Tooltip formatter={(v: any) => money(Number(v))} />
                 <Bar dataKey="revenue" fill="#8b5cf6" name="Revenue" />
               </BarChart>
             </ResponsiveContainer>

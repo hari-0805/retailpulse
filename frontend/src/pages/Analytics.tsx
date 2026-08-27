@@ -186,16 +186,16 @@ export default function Analytics() {
           </button>
         ))}
       </div>
-      <div className="mb-6 grid grid-cols-2 gap-3 rounded-lg bg-white p-4 shadow-sm sm:grid-cols-3 lg:grid-cols-8">
-        <div>
+      <div className="mb-6 flex flex-wrap gap-3 rounded-lg bg-white p-4 shadow-sm">
+       <div className="w-full sm:w-40">
           <label className="form-label">From</label>
           <input type="date" className="form-input" value={filters.date_from}
-            onChange={(e) => updateFilter("date_from", e.target.value)} />
+             onChange={(e) => updateFilter("date_from", e.target.value)} />
         </div>
-        <div>
+        <div className="w-full sm:w-40">
           <label className="form-label">To</label>
           <input type="date" className="form-input" value={filters.date_to}
-            onChange={(e) => updateFilter("date_to", e.target.value)} />
+             onChange={(e) => updateFilter("date_to", e.target.value)} />
         </div>
         <div>
           <label className="form-label">Category</label>
@@ -303,7 +303,7 @@ export default function Analytics() {
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis dataKey="period" tick={{ fontSize: 11 }} />
                     <YAxis tick={{ fontSize: 11 }} />
-                    <Tooltip formatter={(v: number) => money(v)} />
+                    <Tooltip formatter={(v: any) => money(Number(v))} />
                     <Legend />
                     <Line type="monotone" dataKey="revenue" stroke="#2563eb" strokeWidth={2} name="Revenue" />
                     <Line type="monotone" dataKey="orders" stroke="#10b981" strokeWidth={2} name="Orders" />
@@ -327,7 +327,7 @@ export default function Analytics() {
                     <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
                     <XAxis type="number" tick={{ fontSize: 11 }} />
                     <YAxis type="category" dataKey="product_name" width={110} tick={{ fontSize: 11 }} />
-                    <Tooltip formatter={(v: number) => (topProductsSort === "revenue" ? money(v) : v)} />
+                    <Tooltip formatter={(v: any) => (topProductsSort === "revenue" ? money(Number(v)) : v)} />
                     <Bar
                       dataKey={topProductsSort} fill="#2563eb" radius={[0, 4, 4, 0]} barSize={14}
                       onClick={(row: any) => openSalesDrilldown(`Sales — ${row.product_name}`, { product_id: row.product_id })}
@@ -346,7 +346,7 @@ export default function Analytics() {
                     <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
                     <XAxis type="number" tick={{ fontSize: 11 }} />
                     <YAxis type="category" dataKey="category_name" width={110} tick={{ fontSize: 11 }} />
-                    <Tooltip formatter={(v: number) => money(v)} />
+                    <Tooltip formatter={(v: any) => money(Number(v))} />
                     <Bar
                       dataKey="revenue" fill="#10b981" radius={[0, 4, 4, 0]} barSize={14}
                       onClick={(row: any) => updateFilter("category_id", row.category_id)}
@@ -368,7 +368,7 @@ export default function Analytics() {
                         <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
                       ))}
                     </Pie>
-                    <Tooltip formatter={(v: number) => money(v)} />
+                    <Tooltip formatter={(v: any) => money(Number(v))} />
                     <Legend />
                   </PieChart>
                 </ResponsiveContainer>
@@ -385,7 +385,7 @@ export default function Analytics() {
                         <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
                       ))}
                     </Pie>
-                    <Tooltip formatter={(v: number) => money(v)} />
+                    <Tooltip formatter={(v: any) => money(Number(v))} />
                     <Legend />
                   </PieChart>
                 </ResponsiveContainer>

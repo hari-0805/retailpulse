@@ -19,7 +19,7 @@ from app.models.customers import (
     Customer, CustomerPurchaseSummary, CustomerActivity,
 )
 from app.models.forecasting import (
-    ForecastPeriod, RecommendationType, DemandForecast, ForecastHistory,
+    ForecastPeriod, RecommendationType, StockRisk, DemandForecast, ForecastHistory,
 )
 
 __all__ = [
@@ -30,5 +30,5 @@ __all__ = [
     "MovementType", "Inventory", "InventoryMovement",
     "CustomerType", "CustomerStatus", "CustomerGender", "CustomerSegment", "CustomerActivityType",
     "Customer", "CustomerPurchaseSummary", "CustomerActivity",
-    "ForecastPeriod", "RecommendationType", "DemandForecast", "ForecastHistory",
+    "ForecastPeriod", "RecommendationType", "StockRisk", "DemandForecast", "ForecastHistory",
 ]
