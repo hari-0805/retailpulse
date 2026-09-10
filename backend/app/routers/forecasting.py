@@ -35,7 +35,7 @@ SORT_FIELDS = {
     "predicted_demand": DemandForecast.predicted_demand,
     "lowest_stock": DemandForecast.current_stock,
     "growth": DemandForecast.expected_growth_percentage,
-    "accuracy": DemandForecast.confidence_score,
+    "accuracy": DemandForecast.last_accuracy,
 }
 
 
@@ -47,7 +47,7 @@ def _serialize_product_row(f: DemandForecast) -> ProductForecastRow:
         predicted_demand=f.predicted_demand, forecast_period=f.forecast_period,
         period_start=f.period_start, period_end=f.period_end, confidence_score=f.confidence_score,
         expected_growth_percentage=f.expected_growth_percentage, recommendation=f.recommendation,
-        generated_at=f.generated_at,
+        generated_at=f.generated_at, last_accuracy=f.last_accuracy,
     )
 
 

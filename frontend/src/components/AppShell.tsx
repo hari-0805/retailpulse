@@ -58,6 +58,12 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    label: "Data",
+    items: [
+      { to: "/data-import", label: "Data Import", icon: <Icon d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />, roles: ADMIN_ONLY },
+    ],
+  },
+  {
     label: "Account",
     items: [
       { to: "/profile", label: "Profile", icon: <Icon d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" /> },
@@ -141,7 +147,7 @@ export default function AppShell() {
   );
 
   return (
-    <div className="min-h-screen bg-paper">
+    <div className="min-h-screen w-full max-w-[100vw] overflow-x-hidden bg-paper">
       {/* Mobile top bar — hidden on desktop (lg:hidden), where the fixed sidebar takes over. */}
       <div className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-slate-200 bg-white px-4 lg:hidden">
         <button
@@ -174,8 +180,8 @@ export default function AppShell() {
         {sidebarContent}
       </aside>
 
-      <div className="flex min-h-screen w-full flex-col lg:ml-60">
-        <main className="flex-1">
+      <div className="flex min-h-screen min-w-0 flex-col lg:ml-60">
+        <main className="min-w-0 flex-1 overflow-x-hidden">
           <Outlet />
         </main>
       </div>

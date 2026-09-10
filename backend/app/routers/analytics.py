@@ -21,20 +21,63 @@ router = APIRouter(prefix="/analytics", tags=["analytics"])
 ANALYTICS_ROLES = [UserRole.COMPANY_ADMIN, UserRole.SUPER_ADMIN, UserRole.ANALYST]
 
 
-def _sales_base_query(
+def _matching_sale_ids(
     db: Session, company_id: str,
     date_from: Optional[date], date_to: Optional[date],
     category_id: Optional[str], product_id: Optional[str], brand: Optional[str],
-    sales_channel: Optional[str], payment_method: Optional[str], customer_id: Optional[str] = None,
+    sales_channel: Optional[str], payment_method: Optional[str], customer_id: Optional[str],
 ):
     """
-    Sale + SaleItem joined query with every dashboard filter applied.
-    Returns a query already joined on SaleItem/Product so callers can
-    group/aggregate on whichever columns they need.
+    A Sale.id query matching every filter. Sale-level filters (date,
+    channel, payment method, customer) are applied directly on Sale.
+    Item-level filters (category/product/brand) require a join against
+    SaleItem/Product, but this query only ever selects Sale.id and is
+    de-duplicated — so downstream order-level aggregates (SUM(total_amount),
+    COUNT(*)) built from `Sale.id.in_(this)` never get fanned out just
+    because a sale happens to have multiple matching line items.
+    """
+    query = db.query(Sale.id).filter(Sale.company_id == company_id)
+    if date_from:
+        query = query.filter(Sale.sale_date >= datetime.combine(date_from, datetime.min.time()))
+    if date_to:
+        query = query.filter(Sale.sale_date <= datetime.combine(date_to, datetime.max.time()))
+    if sales_channel:
+        query = query.filter(Sale.sales_channel == sales_channel)
+    if payment_method:
+        query = query.filter(Sale.payment_method == payment_method)
+    if customer_id:
+        query = query.filter(Sale.customer_id == customer_id)
+
+    if category_id or product_id or brand:
+        query = query.join(SaleItem, SaleItem.sale_id == Sale.id).join(Product, Product.id == SaleItem.product_id)
+        if category_id:
+            query = query.filter(SaleItem.category_id == category_id)
+        if product_id:
+            query = query.filter(SaleItem.product_id == product_id)
+        if brand:
+            query = query.filter(Product.brand == brand)
+        query = query.distinct()
+
+    return query
+
+
+def _item_level_base(
+    db: Session, company_id: str,
+    date_from: Optional[date], date_to: Optional[date],
+    category_id: Optional[str], product_id: Optional[str], brand: Optional[str],
+    sales_channel: Optional[str], payment_method: Optional[str], customer_id: Optional[str],
+):
+    """
+    SaleItem joined to Sale and Product, every filter applied directly.
+    Safe to aggregate straight off this query for anything that is
+    inherently per-line-item (quantity, discount, tax, per-product or
+    per-category revenue) — each row already IS one line item, so no
+    de-duplication is needed the way it is for order-level aggregates.
+    Call `.with_entities(...)` on the result to pick columns/aggregates.
     """
     query = (
-        db.query(Sale, SaleItem, Product)
-        .join(SaleItem, SaleItem.sale_id == Sale.id)
+        db.query(SaleItem)
+        .join(Sale, Sale.id == SaleItem.sale_id)
         .join(Product, Product.id == SaleItem.product_id)
         .filter(Sale.company_id == company_id)
     )
@@ -62,7 +105,8 @@ def _inventory_base_query(
     category_id: Optional[str], product_id: Optional[str], brand: Optional[str],
 ):
     """Inventory + Product joined query. Date/channel/payment filters don't
-    apply to inventory (it has no such dimensions) — only product/category/brand do."""
+    apply to inventory (it has no such dimensions) — only product/category/brand do.
+    Call `.with_entities(...)` on the result to pick columns/aggregates."""
     query = (
         db.query(Inventory, Product)
         .join(Product, Product.id == Inventory.product_id)
@@ -77,6 +121,15 @@ def _inventory_base_query(
     return query
 
 
+def _format_bucket_label(bucket: datetime, granularity: str) -> str:
+    if granularity == "weekly":
+        iso_year, iso_week, _ = bucket.isocalendar()
+        return f"{iso_year}-W{iso_week:02d}"
+    if granularity == "monthly":
+        return bucket.strftime("%Y-%m")
+    return bucket.strftime("%Y-%m-%d")
+
+
 def _build_summary(
     db: Session, company_id: str,
     date_from: Optional[date], date_to: Optional[date],
@@ -84,133 +137,178 @@ def _build_summary(
     sales_channel: Optional[str], payment_method: Optional[str],
     granularity: str, customer_id: Optional[str] = None,
 ) -> AnalyticsSummary:
-    sales_rows = _sales_base_query(
-        db, company_id, date_from, date_to, category_id, product_id, brand,
-        sales_channel, payment_method, customer_id,
-    ).all()
+    filt_args = (date_from, date_to, category_id, product_id, brand, sales_channel, payment_method, customer_id)
 
-    # De-duplicate sales for order-level aggregates (a sale can appear once
-    # per matching line item after the join).
-    unique_sales = {}
-    for sale, _item, _product in sales_rows:
-        unique_sales[sale.id] = sale
-
-    total_revenue = sum((s.total_amount for s in unique_sales.values()), Decimal("0"))
-    total_orders = len(unique_sales)
-    total_products_sold = sum((item.quantity for _s, item, _p in sales_rows), 0)
+    # --- Order-level KPIs (revenue, order count) ---
+    # Aggregated straight off Sale, filtered to the matching-sale-id set, so
+    # a sale with several matching line items is never counted more than once.
+    total_revenue, total_orders = db.query(
+        func.coalesce(func.sum(Sale.total_amount), 0),
+        func.count(Sale.id),
+    ).filter(Sale.id.in_(_matching_sale_ids(db, company_id, *filt_args))).one()
+    total_revenue = Decimal(total_revenue)
     average_order_value = (total_revenue / total_orders) if total_orders else Decimal("0")
-    total_discount = sum((item.discount for _s, item, _p in sales_rows), Decimal("0"))
-    total_tax = sum((item.tax for _s, item, _p in sales_rows), Decimal("0"))
 
-    inv_rows = _inventory_base_query(db, company_id, category_id, product_id, brand).all()
-    total_inventory_value = sum(
-        (inv.current_stock * product.unit_price for inv, product in inv_rows), Decimal("0")
-    )
-    low_stock_products = sum(1 for inv, _p in inv_rows if inv.stock_status == StockStatus.LOW_STOCK)
-    out_of_stock_products = sum(1 for inv, _p in inv_rows if inv.stock_status == StockStatus.OUT_OF_STOCK)
+    # --- Item-level KPIs (quantity, discount, tax) ---
+    total_products_sold, total_discount, total_tax = _item_level_base(
+        db, company_id, *filt_args
+    ).with_entities(
+        func.coalesce(func.sum(SaleItem.quantity), 0),
+        func.coalesce(func.sum(SaleItem.discount), 0),
+        func.coalesce(func.sum(SaleItem.tax), 0),
+    ).one()
+    total_discount = Decimal(total_discount)
+    total_tax = Decimal(total_tax)
+
+    # --- Inventory KPIs ---
+    total_inventory_value, low_stock_products, out_of_stock_products = _inventory_base_query(
+        db, company_id, category_id, product_id, brand
+    ).with_entities(
+        func.coalesce(func.sum(Inventory.current_stock * Product.unit_price), 0),
+        func.count(case((Inventory.stock_status == StockStatus.LOW_STOCK, 1))),
+        func.count(case((Inventory.stock_status == StockStatus.OUT_OF_STOCK, 1))),
+    ).one()
+    total_inventory_value = Decimal(total_inventory_value)
     total_categories = db.query(Category).filter(Category.company_id == company_id).count()
 
     # --- Revenue trend ---
     trunc_unit = {"daily": "day", "weekly": "week", "monthly": "month"}.get(granularity, "day")
-    trend_map: dict[str, dict] = {}
-    for sale in unique_sales.values():
-        bucket = sale.sale_date
-        if trunc_unit == "day":
-            key = bucket.strftime("%Y-%m-%d")
-        elif trunc_unit == "week":
-            key = f"{bucket.isocalendar()[0]}-W{bucket.isocalendar()[1]:02d}"
-        else:
-            key = bucket.strftime("%Y-%m")
-        entry = trend_map.setdefault(key, {"revenue": Decimal("0"), "orders": 0})
-        entry["revenue"] += sale.total_amount
-        entry["orders"] += 1
+    bucket_expr = func.date_trunc(trunc_unit, Sale.sale_date)
+    trend_rows = (
+        db.query(bucket_expr.label("bucket"), func.sum(Sale.total_amount), func.count(Sale.id))
+        .filter(Sale.id.in_(_matching_sale_ids(db, company_id, *filt_args)))
+        .group_by(bucket_expr)
+        .order_by(bucket_expr)
+        .all()
+    )
     revenue_trend = [
-        {"period": k, "revenue": v["revenue"], "orders": v["orders"]}
-        for k, v in sorted(trend_map.items())
+        {"period": _format_bucket_label(bucket, granularity), "revenue": Decimal(revenue or 0), "orders": orders}
+        for bucket, revenue, orders in trend_rows
     ]
 
     # --- Top products ---
-    product_map: dict[str, dict] = {}
-    for _s, item, product in sales_rows:
-        entry = product_map.setdefault(product.id, {
-            "product_id": product.id, "product_name": product.name, "sku": product.sku,
-            "quantity_sold": 0, "revenue": Decimal("0"),
-        })
-        entry["quantity_sold"] += item.quantity
-        entry["revenue"] += item.total
-    top_products = sorted(product_map.values(), key=lambda r: r["revenue"], reverse=True)[:10]
+    top_products_rows = (
+        _item_level_base(db, company_id, *filt_args)
+        .with_entities(
+            Product.id, Product.name, Product.sku,
+            func.sum(SaleItem.quantity), func.sum(SaleItem.total),
+        )
+        .group_by(Product.id, Product.name, Product.sku)
+        .order_by(func.sum(SaleItem.total).desc())
+        .limit(10)
+        .all()
+    )
+    top_products = [
+        {"product_id": pid, "product_name": name, "sku": sku, "quantity_sold": qty, "revenue": Decimal(rev or 0)}
+        for pid, name, sku, qty, rev in top_products_rows
+    ]
 
-    # --- Top categories ---
-    category_map: dict[str, dict] = {}
-    for _s, item, _product in sales_rows:
-        cat = db.query(Category).filter(Category.id == item.category_id).first()
-        cat_name = cat.name if cat else "Uncategorized"
-        entry = category_map.setdefault(item.category_id, {
-            "category_id": item.category_id, "category_name": cat_name,
-            "revenue": Decimal("0"), "quantity_sold": 0,
-        })
-        entry["revenue"] += item.total
-        entry["quantity_sold"] += item.quantity
-    top_categories = sorted(category_map.values(), key=lambda r: r["revenue"], reverse=True)[:10]
+    # --- Top categories --- (Category joined once here, instead of an
+    # N+1 lookup per row like the previous implementation did.)
+    top_categories_rows = (
+        _item_level_base(db, company_id, *filt_args)
+        .join(Category, Category.id == SaleItem.category_id, isouter=True)
+        .with_entities(
+            SaleItem.category_id, func.coalesce(Category.name, "Uncategorized"),
+            func.sum(SaleItem.total), func.sum(SaleItem.quantity),
+        )
+        .group_by(SaleItem.category_id, Category.name)
+        .order_by(func.sum(SaleItem.total).desc())
+        .limit(10)
+        .all()
+    )
+    top_categories = [
+        {"category_id": cid, "category_name": name, "revenue": Decimal(rev or 0), "quantity_sold": qty}
+        for cid, name, rev, qty in top_categories_rows
+    ]
 
     # --- Payment method / channel breakdowns ---
-    payment_map: dict[str, dict] = {}
-    channel_map: dict[str, dict] = {}
-    for sale in unique_sales.values():
-        pm = sale.payment_method.value
-        pentry = payment_map.setdefault(pm, {"payment_method": pm, "revenue": Decimal("0"), "orders": 0})
-        pentry["revenue"] += sale.total_amount
-        pentry["orders"] += 1
+    payment_rows = (
+        db.query(Sale.payment_method, func.sum(Sale.total_amount), func.count(Sale.id))
+        .filter(Sale.id.in_(_matching_sale_ids(db, company_id, *filt_args)))
+        .group_by(Sale.payment_method)
+        .all()
+    )
+    by_payment_method = [
+        {"payment_method": pm.value, "revenue": Decimal(rev or 0), "orders": cnt} for pm, rev, cnt in payment_rows
+    ]
 
-        ch = sale.sales_channel.value
-        centry = channel_map.setdefault(ch, {"sales_channel": ch, "revenue": Decimal("0"), "orders": 0})
-        centry["revenue"] += sale.total_amount
-        centry["orders"] += 1
+    channel_rows = (
+        db.query(Sale.sales_channel, func.sum(Sale.total_amount), func.count(Sale.id))
+        .filter(Sale.id.in_(_matching_sale_ids(db, company_id, *filt_args)))
+        .group_by(Sale.sales_channel)
+        .all()
+    )
+    by_sales_channel = [
+        {"sales_channel": ch.value, "revenue": Decimal(rev or 0), "orders": cnt} for ch, rev, cnt in channel_rows
+    ]
 
-    # --- Customer revenue analysis ---
-    customer_map: dict[str, dict] = {}
-    for sale in unique_sales.values():
-        key = sale.customer_id or f"unlinked:{sale.customer_name}"
-        entry = customer_map.setdefault(key, {
-            "customer_id": sale.customer_id, "customer_name": sale.customer_name,
-            "orders": 0, "total_spend": Decimal("0"),
+    # --- Customer revenue analysis --- (grouping by (customer_id, customer_name)
+    # keeps unlinked/walk-in sales bucketed by name, same as before, since SQL
+    # treats two NULL customer_ids as equal for GROUP BY purposes.)
+    customer_rows = (
+        db.query(Sale.customer_id, Sale.customer_name, func.sum(Sale.total_amount), func.count(Sale.id))
+        .filter(Sale.id.in_(_matching_sale_ids(db, company_id, *filt_args)))
+        .group_by(Sale.customer_id, Sale.customer_name)
+        .order_by(func.sum(Sale.total_amount).desc())
+        .limit(10)
+        .all()
+    )
+    customer_revenue = []
+    for cust_id, cust_name, spend, orders in customer_rows:
+        spend = Decimal(spend or 0)
+        customer_revenue.append({
+            "customer_id": cust_id, "customer_name": cust_name, "orders": orders,
+            "total_spend": spend, "average_order_value": spend / orders if orders else Decimal("0"),
         })
-        entry["orders"] += 1
-        entry["total_spend"] += sale.total_amount
-    for entry in customer_map.values():
-        entry["average_order_value"] = entry["total_spend"] / entry["orders"] if entry["orders"] else Decimal("0")
-    customer_revenue = sorted(customer_map.values(), key=lambda r: r["total_spend"], reverse=True)[:10]
 
     # --- Inventory breakdowns ---
-    inv_cat_map: dict[str, dict] = {}
-    for inv, product in inv_rows:
-        cat = db.query(Category).filter(Category.id == product.category_id).first()
-        cat_name = cat.name if cat else "Uncategorized"
-        entry = inv_cat_map.setdefault(product.category_id, {
-            "category_id": product.category_id, "category_name": cat_name,
-            "quantity": 0, "value": Decimal("0"),
-        })
-        entry["quantity"] += inv.current_stock
-        entry["value"] += inv.current_stock * product.unit_price
+    inv_cat_rows = (
+        _inventory_base_query(db, company_id, category_id, product_id, brand)
+        .join(Category, Category.id == Product.category_id, isouter=True)
+        .with_entities(
+            Product.category_id, func.coalesce(Category.name, "Uncategorized"),
+            func.coalesce(func.sum(Inventory.current_stock), 0),
+            func.coalesce(func.sum(Inventory.current_stock * Product.unit_price), 0),
+        )
+        .group_by(Product.category_id, Category.name)
+        .all()
+    )
+    inventory_by_category = [
+        {"category_id": cid, "category_name": name, "quantity": qty, "value": Decimal(val or 0)}
+        for cid, name, qty, val in inv_cat_rows
+    ]
 
-    status_map: dict[str, int] = {}
-    for inv, _p in inv_rows:
-        status_map[inv.stock_status.value] = status_map.get(inv.stock_status.value, 0) + 1
+    status_rows = (
+        _inventory_base_query(db, company_id, category_id, product_id, brand)
+        .with_entities(Inventory.stock_status, func.count(Inventory.id))
+        .group_by(Inventory.stock_status)
+        .all()
+    )
+    inventory_status_summary = [{"status": s.value, "count": c} for s, c in status_rows]
 
-    top_low_stock = sorted(
-        [
-            {
-                "product_id": p.id, "product_name": p.name, "sku": p.sku,
-                "available_stock": inv.available_stock, "reorder_level": inv.reorder_level,
-            }
-            for inv, p in inv_rows if inv.stock_status == StockStatus.LOW_STOCK
-        ],
-        key=lambda r: r["available_stock"],
-    )[:10]
+    low_rows = (
+        _inventory_base_query(db, company_id, category_id, product_id, brand)
+        .filter(Inventory.stock_status == StockStatus.LOW_STOCK)
+        .with_entities(Product.id, Product.name, Product.sku, Inventory.available_stock, Inventory.reorder_level)
+        .order_by(Inventory.available_stock.asc())
+        .limit(10)
+        .all()
+    )
+    top_low_stock = [
+        {"product_id": pid, "product_name": name, "sku": sku, "available_stock": avail, "reorder_level": rl}
+        for pid, name, sku, avail, rl in low_rows
+    ]
 
+    oos_rows = (
+        _inventory_base_query(db, company_id, category_id, product_id, brand)
+        .filter(Inventory.stock_status == StockStatus.OUT_OF_STOCK)
+        .with_entities(Product.id, Product.name, Product.sku, Inventory.updated_at)
+        .all()
+    )
     out_of_stock = [
-        {"product_id": p.id, "product_name": p.name, "sku": p.sku, "updated_at": inv.updated_at}
-        for inv, p in inv_rows if inv.stock_status == StockStatus.OUT_OF_STOCK
+        {"product_id": pid, "product_name": name, "sku": sku, "updated_at": upd}
+        for pid, name, sku, upd in oos_rows
     ]
 
     return AnalyticsSummary(
@@ -229,14 +327,14 @@ def _build_summary(
         revenue_trend=revenue_trend,
         top_products=top_products,
         top_categories=top_categories,
-        by_payment_method=list(payment_map.values()),
-        by_sales_channel=list(channel_map.values()),
+        by_payment_method=by_payment_method,
+        by_sales_channel=by_sales_channel,
         customer_revenue=customer_revenue,
-        inventory_by_category=list(inv_cat_map.values()),
-        inventory_status_summary=[{"status": k, "count": v} for k, v in status_map.items()],
+        inventory_by_category=inventory_by_category,
+        inventory_status_summary=inventory_status_summary,
         top_low_stock=top_low_stock,
         out_of_stock=out_of_stock,
-        inventory_value_by_category=list(inv_cat_map.values()),
+        inventory_value_by_category=inventory_by_category,
     )
 
 

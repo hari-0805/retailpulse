@@ -48,6 +48,102 @@ def _daily_sales(db: Session, company_id: str, product_id: str, start: datetime,
     return int(total or 0)
 
 
+def _batch_sales_windows(
+    db: Session, company_id: str, product_ids: list[str],
+    recent_start: datetime, prior_start: datetime, period_start: datetime,
+) -> dict[str, dict]:
+    """
+    Replaces what used to be 2-3 separate `_daily_sales()` calls PER PRODUCT
+    inside the generation loop (mentor review: "calls the sales query 3-4
+    times per product"). Instead, this runs exactly 2 grouped SUM queries
+    (recent window, prior window) covering every product in the batch at
+    once, regardless of how many products there are.
+
+    `total_history` = recent + prior always holds, because the caller sets
+    `prior_start = history_start` explicitly (see generate_forecasts) — so
+    the old third "total history" query was always redundant with these
+    two and is dropped entirely.
+    """
+    if not product_ids:
+        return {}
+
+    def _grouped_sum(start: datetime, end: datetime) -> dict[str, int]:
+        rows = (
+            db.query(SaleItem.product_id, func.coalesce(func.sum(SaleItem.quantity), 0))
+            .join(Sale, Sale.id == SaleItem.sale_id)
+            .filter(
+                Sale.company_id == company_id, SaleItem.product_id.in_(product_ids),
+                Sale.sale_date >= start, Sale.sale_date < end,
+            )
+            .group_by(SaleItem.product_id)
+            .all()
+        )
+        return {pid: int(qty) for pid, qty in rows}
+
+    recent_by_product = _grouped_sum(recent_start, period_start)
+    prior_by_product = _grouped_sum(prior_start, recent_start)
+
+    weeks_rows = (
+        db.query(SaleItem.product_id, func.count(func.distinct(func.date_trunc("week", Sale.sale_date))))
+        .join(Sale, Sale.id == SaleItem.sale_id)
+        .filter(
+            Sale.company_id == company_id, SaleItem.product_id.in_(product_ids),
+            Sale.sale_date >= prior_start, Sale.sale_date < period_start,
+        )
+        .group_by(SaleItem.product_id)
+        .all()
+    )
+    weeks_by_product = {pid: int(cnt) for pid, cnt in weeks_rows}
+
+    windows = {}
+    for pid in product_ids:
+        recent = recent_by_product.get(pid, 0)
+        prior = prior_by_product.get(pid, 0)
+        windows[pid] = {
+            "total_history": recent + prior,
+            "recent_sales": recent,
+            "prior_sales": prior,
+            "weeks_with_sales": weeks_by_product.get(pid, 0),
+        }
+    return windows
+
+
+def _batch_actual_sales_for_existing(
+    db: Session, company_id: str, existing_by_product: dict[str, "DemandForecast"],
+) -> dict[str, int]:
+    """
+    For every existing forecast whose target period has already elapsed,
+    batch-fetches the actual sales for that exact window — grouped by the
+    distinct (period_start, period_end) pairs involved, so this is one
+    query per distinct window (in practice almost always just 1, since a
+    whole generation run shares the same window) rather than one query
+    per product.
+    """
+    now = datetime.utcnow()
+    windows: dict[tuple, list[str]] = {}
+    for pid, forecast in existing_by_product.items():
+        if forecast.period_end <= now:
+            windows.setdefault((forecast.period_start, forecast.period_end), []).append(pid)
+
+    actuals: dict[str, int] = {}
+    for (start, end), pids in windows.items():
+        for pid in pids:
+            actuals[pid] = 0  # default so "no matching sales" is 0, not missing
+        rows = (
+            db.query(SaleItem.product_id, func.coalesce(func.sum(SaleItem.quantity), 0))
+            .join(Sale, Sale.id == SaleItem.sale_id)
+            .filter(
+                Sale.company_id == company_id, SaleItem.product_id.in_(pids),
+                Sale.sale_date >= start, Sale.sale_date < end,
+            )
+            .group_by(SaleItem.product_id)
+            .all()
+        )
+        for pid, qty in rows:
+            actuals[pid] = int(qty)
+    return actuals
+
+
 def _compute_recommendation(current_stock: int, reorder_level: int, predicted_demand: int) -> RecommendationType:
     """Task 7's original 4-tier recommendation. Kept as-is so the existing
     Demand Forecasting dashboard/notifications/export keep working."""
@@ -130,18 +226,18 @@ def compute_replenishment(
 def _forecast_one_product(
     db: Session, company_id: str, product: Product, period: ForecastPeriod,
     period_start: datetime, period_end: datetime, user_id: Optional[str],
+    sales_window: dict, inventory: Optional[Inventory],
+    existing: Optional[DemandForecast], actual_for_existing: Optional[int],
 ) -> Optional[DemandForecast]:
     horizon_days = (period_end - period_start).days or 1
 
-    history_start = period_start - timedelta(days=max(TREND_WINDOW_DAYS * 2, MIN_HISTORY_DAYS))
-    total_history = _daily_sales(db, company_id, product.id, history_start, period_start)
+    total_history = sales_window["total_history"]
     if total_history <= 0:
         return None  # no historical sales data -> nothing to forecast from
 
-    recent_start = period_start - timedelta(days=TREND_WINDOW_DAYS)
-    prior_start = period_start - timedelta(days=TREND_WINDOW_DAYS * 2)
-    recent_sales = _daily_sales(db, company_id, product.id, recent_start, period_start)
-    prior_sales = _daily_sales(db, company_id, product.id, prior_start, recent_start)
+    recent_sales = sales_window["recent_sales"]
+    prior_sales = sales_window["prior_sales"]
+    weeks_with_sales = sales_window["weeks_with_sales"]
 
     avg_daily_recent = recent_sales / TREND_WINDOW_DAYS
     if prior_sales > 0:
@@ -152,17 +248,8 @@ def _forecast_one_product(
 
     predicted_demand = max(0, round(avg_daily_recent * horizon_days * (1 + growth_rate)))
 
-    weeks_with_sales = db.query(func.count(func.distinct(
-        func.date_trunc("week", Sale.sale_date)
-    ))).join(SaleItem, SaleItem.sale_id == Sale.id).filter(
-        Sale.company_id == company_id, SaleItem.product_id == product.id,
-        Sale.sale_date >= history_start, Sale.sale_date < period_start,
-    ).scalar() or 0
     confidence = min(Decimal("0.95"), Decimal("0.30") + Decimal("0.60") * Decimal(min(weeks_with_sales, 13)) / Decimal(13))
 
-    inventory = db.query(Inventory).filter(
-        Inventory.company_id == company_id, Inventory.product_id == product.id
-    ).first()
     current_stock = inventory.available_stock if inventory else product.stock_quantity
     reorder_level = inventory.reorder_level if inventory else 10
     recommendation = _compute_recommendation(current_stock, reorder_level, predicted_demand)
@@ -170,17 +257,9 @@ def _forecast_one_product(
     avg_daily_sales_decimal = Decimal(str(round(avg_daily_recent, 4)))
     replenishment = compute_replenishment(current_stock, avg_daily_sales_decimal, predicted_demand)
 
-    existing_query = db.query(DemandForecast).filter(
-        DemandForecast.company_id == company_id, DemandForecast.product_id == product.id,
-        DemandForecast.forecast_period == period,
-    )
-    if period == ForecastPeriod.CUSTOM:
-        existing_query = existing_query.filter(DemandForecast.period_start == period_start)
-    existing = existing_query.first()
-
     # Log accuracy for the previous forecast if its window has already elapsed.
-    if existing and existing.period_end <= datetime.utcnow():
-        actual = _daily_sales(db, company_id, product.id, existing.period_start, existing.period_end)
+    if existing and existing.period_end <= datetime.utcnow() and actual_for_existing is not None:
+        actual = actual_for_existing
         denom = max(actual, existing.predicted_demand, 1)
         accuracy = Decimal(1) - (Decimal(abs(actual - existing.predicted_demand)) / Decimal(denom))
         accuracy = max(Decimal(0), min(accuracy, Decimal(1)))
@@ -188,6 +267,7 @@ def _forecast_one_product(
             forecast_id=existing.id, historical_sales=actual,
             prediction=existing.predicted_demand, accuracy=accuracy,
         ))
+        existing.last_accuracy = accuracy
 
     growth_pct = Decimal(growth_rate * 100).quantize(Decimal("0.01"))
 
@@ -272,13 +352,53 @@ def generate_forecasts(
     if category_id:
         query = query.filter(Product.category_id == category_id)
     products = query.all()
+    product_ids = [p.id for p in products]
 
+    # prior_start is deliberately set equal to history_start (not derived
+    # from TREND_WINDOW_DAYS alone) so that recent+prior always equals the
+    # full history window, even if MIN_HISTORY_DAYS and TREND_WINDOW_DAYS
+    # are changed independently later — see _batch_sales_windows docstring.
+    history_start = period_start - timedelta(days=max(TREND_WINDOW_DAYS * 2, MIN_HISTORY_DAYS))
+    recent_start = period_start - timedelta(days=TREND_WINDOW_DAYS)
+    prior_start = history_start
+
+    # Everything below is fetched ONCE for the whole batch (mentor review:
+    # the old version re-ran 3-4 sales queries per product inside the loop).
+    sales_windows = _batch_sales_windows(db, company_id, product_ids, recent_start, prior_start, period_start)
+
+    inventory_by_product = {
+        inv.product_id: inv
+        for inv in db.query(Inventory).filter(
+            Inventory.company_id == company_id, Inventory.product_id.in_(product_ids)
+        ).all()
+    } if product_ids else {}
+
+    existing_by_product: dict[str, DemandForecast] = {}
+    if product_ids:
+        existing_query = db.query(DemandForecast).filter(
+            DemandForecast.company_id == company_id, DemandForecast.forecast_period == period,
+            DemandForecast.product_id.in_(product_ids),
+        )
+        if period == ForecastPeriod.CUSTOM:
+            existing_query = existing_query.filter(DemandForecast.period_start == period_start)
+        for f in existing_query.all():
+            existing_by_product[f.product_id] = f
+
+    actuals_for_existing = _batch_actual_sales_for_existing(db, company_id, existing_by_product)
+
+    empty_window = {"total_history": 0, "recent_sales": 0, "prior_sales": 0, "weeks_with_sales": 0}
     forecasted = 0
     skipped = 0
     touched_category_ids = set()
 
     for product in products:
-        result = _forecast_one_product(db, company_id, product, period, period_start, period_end, user_id)
+        result = _forecast_one_product(
+            db, company_id, product, period, period_start, period_end, user_id,
+            sales_window=sales_windows.get(product.id, empty_window),
+            inventory=inventory_by_product.get(product.id),
+            existing=existing_by_product.get(product.id),
+            actual_for_existing=actuals_for_existing.get(product.id),
+        )
         if result:
             forecasted += 1
             touched_category_ids.add(product.category_id)

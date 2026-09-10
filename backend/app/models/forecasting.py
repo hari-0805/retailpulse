@@ -85,6 +85,13 @@ class DemandForecast(Base):
     recommended_reorder_quantity = Column(Integer, nullable=True)
     stock_risk = Column(SAEnum(StockRisk), nullable=True)
 
+    # Cached copy of this forecast's most recent accuracy score (same value
+    # as the newest ForecastHistory.accuracy row for this forecast). Kept
+    # here too, rather than only in ForecastHistory, so the product list can
+    # sort/filter by accuracy without a join — NULL until a forecast period
+    # has actually elapsed and been scored at least once.
+    last_accuracy = Column(Numeric(5, 4), nullable=True)
+
     generated_by = Column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     generated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

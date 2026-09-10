@@ -21,6 +21,9 @@ from app.models.customers import (
 from app.models.forecasting import (
     ForecastPeriod, RecommendationType, StockRisk, DemandForecast, ForecastHistory,
 )
+from app.models.imports import (
+    ImportType, ImportStatus, ImportRowStatus, ImportJob, ImportError,
+)
 
 __all__ = [
     "UserRole", "UserStatus", "Company", "User", "RefreshToken", "AuditLog",
@@ -31,4 +34,5 @@ __all__ = [
     "CustomerType", "CustomerStatus", "CustomerGender", "CustomerSegment", "CustomerActivityType",
     "Customer", "CustomerPurchaseSummary", "CustomerActivity",
     "ForecastPeriod", "RecommendationType", "StockRisk", "DemandForecast", "ForecastHistory",
+    "ImportType", "ImportStatus", "ImportRowStatus", "ImportJob", "ImportError",
 ]

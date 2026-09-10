@@ -63,3 +63,13 @@ __all__ = [
     "ProductDemandTrendPoint", "CategoryDemandTrendRow", "TopPredictedProductRow",
     "SeasonalPatternPoint", "ForecastAnalyticsSummary", "RecommendationRow",
 ]
+
+from app.schemas.imports import (
+    ImportPreviewRow, ImportRowIssue, ImportValidationSummary, ImportUploadResponse,
+    ImportJobOut, ImportJobListResponse, ImportJobDetailOut, ImportResultOut, ImportErrorOut,
+)
+
+__all__ += [
+    "ImportPreviewRow", "ImportRowIssue", "ImportValidationSummary", "ImportUploadResponse",
+    "ImportJobOut", "ImportJobListResponse", "ImportJobDetailOut", "ImportResultOut", "ImportErrorOut",
+]

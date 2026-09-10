@@ -4,7 +4,7 @@ from sqlalchemy import text
 
 from app.database import Base, engine, SessionLocal
 from app.config import settings
-from app.routers import auth, categories, products, dashboard, sales, notifications, inventory, analytics, customers, forecasting, inventory_forecast
+from app.routers import auth, categories, products, dashboard, sales, notifications, inventory, analytics, customers, forecasting, inventory_forecast, imports as data_imports
 
 # Creates tables that don't exist yet (including `sales`, `sale_items`,
 # `notifications` from Task 3, and `customers`, `customer_purchase_summary`,
@@ -114,6 +114,21 @@ with engine.connect() as conn:
     ))
     conn.execute(text("ALTER TABLE sales ADD COLUMN IF NOT EXISTS notes VARCHAR(1000)"))
     conn.commit()
+
+    # Task 10/11 mentor review: DemandForecast.last_accuracy cache column.
+    conn.execute(text(
+        "ALTER TABLE demand_forecasts ADD COLUMN IF NOT EXISTS last_accuracy NUMERIC(5,4)"
+    ))
+    conn.commit()
+
+    # Task 12: Data Import notification type.
+    try:
+        conn.execute(text(
+            "ALTER TYPE notificationtype ADD VALUE IF NOT EXISTS 'DATA_IMPORT_COMPLETED'"
+        ))
+    except Exception:
+        pass
+    conn.commit()
 with SessionLocal() as db:
     from app.models import Product, Inventory
     from app.services.inventory_utils import compute_stock_status
@@ -162,6 +177,7 @@ app.include_router(analytics.router)
 app.include_router(customers.router)
 app.include_router(forecasting.router)
 app.include_router(inventory_forecast.router)
+app.include_router(data_imports.router)
 
 
 @app.get("/health")

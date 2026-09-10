@@ -772,3 +772,75 @@ export interface InventoryForecastListParams {
   page_size: number;
 }
 
+
+// ---------- Data Import (Task 12) ----------
+
+export type ImportType = "PRODUCTS" | "CUSTOMERS" | "SALES";
+export type ImportStatus =
+  | "PENDING"
+  | "VALIDATED"
+  | "PROCESSING"
+  | "COMPLETED"
+  | "COMPLETED_WITH_ERRORS"
+  | "FAILED";
+export type ImportRowStatus = "INVALID" | "DUPLICATE" | "FAILED";
+
+export interface ImportPreviewRow {
+  row_number: number;
+  data: Record<string, string>;
+}
+
+export interface ImportRowIssue {
+  row_number: number;
+  status: ImportRowStatus;
+  message: string;
+  data: Record<string, string>;
+}
+
+export interface ImportValidationSummary {
+  total_records: number;
+  valid_records: number;
+  invalid_records: number;
+  duplicate_records: number;
+}
+
+export interface ImportUploadResponse {
+  import_id: string;
+  import_type: ImportType;
+  filename: string;
+  status: ImportStatus;
+  detected_columns: string[];
+  missing_columns: string[];
+  preview_rows: ImportPreviewRow[];
+  summary: ImportValidationSummary;
+  row_issues: ImportRowIssue[];
+}
+
+export interface ImportJob {
+  id: string;
+  import_type: ImportType;
+  filename: string;
+  uploaded_by_name?: string | null;
+  total_records: number;
+  successful_records: number;
+  failed_records: number;
+  duplicate_records: number;
+  status: ImportStatus;
+  created_at: string;
+  completed_at?: string | null;
+}
+
+export interface ImportJobListResponse {
+  items: ImportJob[];
+  total: number;
+}
+
+export interface ImportResult {
+  id: string;
+  status: ImportStatus;
+  total_records: number;
+  successful_records: number;
+  failed_records: number;
+  duplicate_records: number;
+  completed_at?: string | null;
+}

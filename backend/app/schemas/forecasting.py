@@ -32,6 +32,7 @@ class ProductForecastRow(BaseModel):
     expected_growth_percentage: Decimal
     recommendation: RecommendationType
     generated_at: datetime
+    last_accuracy: Optional[Decimal] = None
 
 
 class ProductForecastListResponse(BaseModel):
