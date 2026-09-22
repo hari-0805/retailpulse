@@ -20,6 +20,7 @@ import CustomerAnalytics from "./pages/CustomerAnalytics";
 import Forecasting from "./pages/Forecasting";
 import InventoryForecast from "./pages/InventoryForecast";
 import DataImport from "./pages/DataImport";
+import AuditLogs from "./pages/AuditLogs";
 
 const queryClient = new QueryClient();
 
@@ -45,6 +46,7 @@ export default function App() {
                 <Route path="/categories" element={<Categories />} />
                 <Route path="/products" element={<Products />} />
                 <Route path="/data-import" element={<DataImport />} />
+                <Route path="/audit-logs" element={<AuditLogs />} />
               </Route>
             </Route>
 

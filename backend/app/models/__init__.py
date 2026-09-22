@@ -1,5 +1,5 @@
 from app.models.auth import (
-    UserRole, UserStatus, Company, User, RefreshToken, AuditLog,
+    UserRole, UserStatus, Company, User, RefreshToken, AuditLog, AuditStatus,
 )
 from app.models.catalog import (
     CategoryStatus, ProductStatus, Category, Product,
@@ -26,7 +26,7 @@ from app.models.imports import (
 )
 
 __all__ = [
-    "UserRole", "UserStatus", "Company", "User", "RefreshToken", "AuditLog",
+    "UserRole", "UserStatus", "Company", "User", "RefreshToken", "AuditLog", "AuditStatus",
     "CategoryStatus", "ProductStatus", "Category", "Product",
     "SalesChannel", "PaymentMethod", "PaymentStatus", "Sale", "SaleItem",
     "NotificationType", "Notification", "StockStatus", "AdjustmentType", "AdjustmentDirection",

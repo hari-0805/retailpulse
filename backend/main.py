@@ -4,7 +4,7 @@ from sqlalchemy import text
 
 from app.database import Base, engine, SessionLocal
 from app.config import settings
-from app.routers import auth, categories, products, dashboard, sales, notifications, inventory, analytics, customers, forecasting, inventory_forecast, imports as data_imports
+from app.routers import auth, categories, products, dashboard, sales, notifications, inventory, analytics, customers, forecasting, inventory_forecast, imports as data_imports, audit_logs
 
 # Creates tables that don't exist yet (including `sales`, `sale_items`,
 # `notifications` from Task 3, and `customers`, `customer_purchase_summary`,
@@ -129,6 +129,40 @@ with engine.connect() as conn:
     except Exception:
         pass
     conn.commit()
+
+    # Task 13: Audit Logs & Activity Monitoring — new columns + status enum
+    # on the already-existing `audit_logs` table.
+    conn.execute(text(
+        "DO $$ BEGIN "
+        "CREATE TYPE auditstatus AS ENUM ('SUCCESS','FAILED'); "
+        "EXCEPTION WHEN duplicate_object THEN null; END $$;"
+    ))
+    conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS resource_type VARCHAR(50)"))
+    conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS resource_id VARCHAR(64)"))
+    conn.execute(text(
+        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS status auditstatus NOT NULL DEFAULT 'SUCCESS'"
+    ))
+    conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS before_values TEXT"))
+    conn.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS after_values TEXT"))
+    conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_audit_logs_action ON audit_logs (action)"
+    ))
+    conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_audit_logs_resource_type ON audit_logs (resource_type)"
+    ))
+    conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_audit_logs_resource_id ON audit_logs (resource_id)"
+    ))
+    conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_audit_logs_status ON audit_logs (status)"
+    ))
+    conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_audit_logs_timestamp ON audit_logs (timestamp)"
+    ))
+    conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_audit_logs_company_timestamp ON audit_logs (company_id, timestamp)"
+    ))
+    conn.commit()
 with SessionLocal() as db:
     from app.models import Product, Inventory
     from app.services.inventory_utils import compute_stock_status
@@ -178,6 +212,7 @@ app.include_router(customers.router)
 app.include_router(forecasting.router)
 app.include_router(inventory_forecast.router)
 app.include_router(data_imports.router)
+app.include_router(audit_logs.router)
 
 
 @app.get("/health")

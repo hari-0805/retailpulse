@@ -134,7 +134,10 @@ def create_product(
     db.commit()
 
     log_action(db, request, "Product Created", company_id=company_id,
-               user_id=current_user.id, entity_name=product.name)
+               user_id=current_user.id, entity_name=product.name,
+               resource_type="Product", resource_id=product.id,
+               after={"name": product.name, "sku": product.sku, "unit_price": str(product.unit_price),
+                      "stock_quantity": product.stock_quantity, "status": product.status.value})
     db.commit()
 
     return product
@@ -229,6 +232,7 @@ def update_product(
             raise HTTPException(status_code=400, detail="A product with this name already exists in this category")
 
     previous_status = product.status
+    before_snapshot = {field: getattr(product, field) for field in update_data}
 
     for field, value in update_data.items():
         setattr(product, field, value)
@@ -236,13 +240,19 @@ def update_product(
     db.commit()
     db.refresh(product)
 
+    after_snapshot = {field: getattr(product, field) for field in update_data}
+
     log_action(db, request, "Product Updated", company_id=company_id,
-               user_id=current_user.id, entity_name=product.name)
+               user_id=current_user.id, entity_name=product.name,
+               resource_type="Product", resource_id=product.id,
+               before=before_snapshot, after=after_snapshot)
 
     if "status" in update_data and update_data["status"] != previous_status:
         action = "Product Activated" if product.status == ProductStatus.ACTIVE else "Product Deactivated"
         log_action(db, request, action, company_id=company_id,
-                   user_id=current_user.id, entity_name=product.name)
+                   user_id=current_user.id, entity_name=product.name,
+                   resource_type="Product", resource_id=product.id,
+                   before={"status": previous_status.value}, after={"status": product.status.value})
 
     db.commit()
     return product
@@ -263,13 +273,16 @@ def toggle_product_status(
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
+    previous_status = product.status
     product.status = new_status
     db.commit()
     db.refresh(product)
 
     action = "Product Activated" if new_status == ProductStatus.ACTIVE else "Product Deactivated"
     log_action(db, request, action, company_id=company_id,
-               user_id=current_user.id, entity_name=product.name)
+               user_id=current_user.id, entity_name=product.name,
+               resource_type="Product", resource_id=product.id,
+               before={"status": previous_status.value}, after={"status": product.status.value})
     db.commit()
 
     return product
@@ -290,11 +303,13 @@ def delete_product(
         raise HTTPException(status_code=404, detail="Product not found")
 
     product_name = product.name
+    product_id = product.id
     db.delete(product)
     db.commit()
 
     log_action(db, request, "Product Deleted", company_id=company_id,
-               user_id=current_user.id, entity_name=product_name)
+               user_id=current_user.id, entity_name=product_name,
+               resource_type="Product", resource_id=product_id)
     db.commit()
 
     return None

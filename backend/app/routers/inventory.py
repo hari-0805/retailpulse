@@ -321,7 +321,9 @@ def adjust_stock(
         db, request, action_map[movement_type],
         company_id=company_id, user_id=current_user.id,
         entity_name=product.name,
-        details=f"{movement_type.value}: {delta:+d} (now {new_current})",
+        details=f"Stock {'increased' if delta > 0 else 'decreased'} from {new_current - delta} to {new_current}",
+        resource_type="Product", resource_id=product.id,
+        before={"stock_quantity": new_current - delta}, after={"stock_quantity": new_current},
     )
     db.commit()
 

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Company, User, UserRole, UserStatus, RefreshToken
+from app.models import Company, User, UserRole, UserStatus, RefreshToken, AuditStatus
 from app.schemas import (
     CompanyRegisterRequest, LoginRequest, TokenResponse,
     RefreshRequest, UserOut, RegisterResponse,
@@ -73,13 +73,24 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
     invalid_credentials = HTTPException(status_code=401, detail="Invalid email or password")
 
     user = db.query(User).filter(User.email == payload.email).first()
-    if user is None or not verify_password(payload.password, user.password):
+    if user is None:
+        # Unknown email: nothing to attribute this attempt to (no company),
+        # and logging the attempted email would risk enumerating accounts
+        # in the audit log itself — so this case is intentionally not logged.
+        raise invalid_credentials
+    if not verify_password(payload.password, user.password):
+        log_action(db, request, action="LOGIN", company_id=user.company_id, user_id=user.id,
+                   resource_type="Auth", status=AuditStatus.FAILED, details="Invalid password")
+        db.commit()
         raise invalid_credentials
     if user.status != UserStatus.ACTIVE:
+        log_action(db, request, action="LOGIN", company_id=user.company_id, user_id=user.id,
+                   resource_type="Auth", status=AuditStatus.FAILED, details="Account is not active")
+        db.commit()
         raise HTTPException(status_code=403, detail="Account is not active")
 
     tokens = _issue_tokens(db, user)
-    log_action(db, request, action="LOGIN", company_id=user.company_id, user_id=user.id)
+    log_action(db, request, action="LOGIN", company_id=user.company_id, user_id=user.id, resource_type="Auth")
     db.commit()
     return tokens
 
@@ -106,10 +117,13 @@ def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-def logout(payload: RefreshRequest, db: Session = Depends(get_db)):
+def logout(payload: RefreshRequest, request: Request, db: Session = Depends(get_db)):
     stored = db.query(RefreshToken).filter(RefreshToken.token == payload.refresh_token).first()
     if stored is not None:
         stored.revoked = True
+        user = db.query(User).filter(User.id == stored.user_id).first()
+        if user is not None:
+            log_action(db, request, action="LOGOUT", company_id=user.company_id, user_id=user.id, resource_type="Auth")
         db.commit()
     return None
 

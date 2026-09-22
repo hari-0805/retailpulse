@@ -73,3 +73,11 @@ __all__ += [
     "ImportPreviewRow", "ImportRowIssue", "ImportValidationSummary", "ImportUploadResponse",
     "ImportJobOut", "ImportJobListResponse", "ImportJobDetailOut", "ImportResultOut", "ImportErrorOut",
 ]
+
+from app.schemas.audit_logs import (
+    AuditLogRow, AuditLogDetail, AuditLogListResponse, AuditLogFilterOptions,
+)
+
+__all__ += [
+    "AuditLogRow", "AuditLogDetail", "AuditLogListResponse", "AuditLogFilterOptions",
+]

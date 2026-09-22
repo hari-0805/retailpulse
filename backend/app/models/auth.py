@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import Column, String, DateTime, ForeignKey, Enum as SAEnum, Boolean
+from sqlalchemy import Column, String, DateTime, ForeignKey, Enum as SAEnum, Boolean, Text, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -66,15 +66,36 @@ class RefreshToken(Base):
     user = relationship("User", back_populates="refresh_tokens")
 
 
+class AuditStatus(str, enum.Enum):
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
     company_id = Column(UUID(as_uuid=False), ForeignKey("companies.id", ondelete="SET NULL"), nullable=True, index=True)
     user_id = Column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
-    action = Column(String(100), nullable=False)
+    action = Column(String(100), nullable=False, index=True)
     entity_name = Column(String(255), nullable=True)
     details = Column(String(500), nullable=True)
     ip_address = Column(String(64), nullable=True)
     browser = Column(String(255), nullable=True)
-    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)
+    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    # Task 13: Audit Logs & Activity Monitoring.
+    resource_type = Column(String(50), nullable=True, index=True)
+    resource_id = Column(String(64), nullable=True, index=True)
+    status = Column(SAEnum(AuditStatus), nullable=False, default=AuditStatus.SUCCESS, index=True)
+    # JSON-encoded snapshots of the changed fields only (not the whole
+    # entity) — e.g. {"status": "Active"} / {"status": "Inactive"}.
+    before_values = Column(Text, nullable=True)
+    after_values = Column(Text, nullable=True)
+
+    user = relationship("User")
+
+    __table_args__ = (
+        # Company + newest-first is the dashboard's default query shape.
+        Index("ix_audit_logs_company_timestamp", "company_id", "timestamp"),
+    )

@@ -844,3 +844,54 @@ export interface ImportResult {
   duplicate_records: number;
   completed_at?: string | null;
 }
+
+// ---------- Audit Logs (Task 13) ----------
+
+export type AuditStatus = "SUCCESS" | "FAILED";
+
+export interface AuditLogRow {
+  id: string;
+  user_id?: string | null;
+  user_name?: string | null;
+  action: string;
+  resource_type?: string | null;
+  resource_id?: string | null;
+  entity_name?: string | null;
+  description?: string | null;
+  ip_address?: string | null;
+  status: AuditStatus;
+  created_at: string;
+}
+
+export interface AuditLogDetail extends AuditLogRow {
+  user_email?: string | null;
+  user_agent?: string | null;
+  before_values?: Record<string, unknown> | null;
+  after_values?: Record<string, unknown> | null;
+}
+
+export interface AuditLogListResponse {
+  items: AuditLogRow[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface AuditLogFilterOptions {
+  users: { id: string; name: string }[];
+  actions: string[];
+  resource_types: string[];
+}
+
+export interface AuditLogFilters {
+  user_id?: string;
+  action?: string;
+  resource_type?: string;
+  status?: AuditStatus;
+  date_from?: string;
+  date_to?: string;
+  search?: string;
+  sort_dir?: "asc" | "desc";
+  page?: number;
+  page_size?: number;
+}
