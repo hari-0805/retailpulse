@@ -4,7 +4,7 @@ from typing import List, Optional
 from pydantic import BaseModel, Field, model_validator
 
 from app.models import (
-    StockStatus, AdjustmentType, AdjustmentDirection, MovementType, NotificationType,
+    StockStatus, AdjustmentType, AdjustmentDirection, MovementType,
 )
 
 
@@ -97,23 +97,3 @@ class InventoryDashboardSummary(BaseModel):
     out_of_stock_count: int
     by_category: List[CategoryBreakdown]
     by_status: List[StatusBreakdown]
-
-
-# ---------- Notifications ----------
-
-class NotificationOut(BaseModel):
-    id: str
-    type: NotificationType
-    message: str
-    is_read: bool
-    created_at: datetime
-    product_id: Optional[str] = None
-
-    class Config:
-        from_attributes = True
-
-
-class NotificationListResponse(BaseModel):
-    items: List[NotificationOut]
-    total: int
-    unread_count: int

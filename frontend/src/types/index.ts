@@ -227,14 +227,49 @@ export interface SalesDashboardSummary {
 
 // ---------- Notification Types ----------
 
+export type NotificationType =
+  | "LOW_STOCK" | "OUT_OF_STOCK" | "STOCKOUT_RISK" | "OVERSTOCK" | "MANUAL_ADJUSTMENT"
+  | "CUSTOMER_REGISTERED" | "CUSTOMER_VIP" | "CUSTOMER_INACTIVE" | "CUSTOMER_FIRST_PURCHASE"
+  | "SALES_ALERT" | "FORECAST_STOCK_RUNOUT" | "FORECAST_DEMAND_EXCEEDS_STOCK" | "FORECAST_DEMAND_GROWTH"
+  | "IMPORT_COMPLETED" | "IMPORT_FAILED" | "SYSTEM_ALERT" | "DATA_IMPORT_COMPLETED";
+
+export type NotificationPriority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+
 export interface AppNotification {
   id: string;
-  company_id: string;
-  product_id?: string | null;
-  type: "LOW_STOCK" | "OUT_OF_STOCK" | "MANUAL_ADJUSTMENT";
+  type: NotificationType;
+  priority: NotificationPriority;
+  title: string;
   message: string;
   is_read: boolean;
+  resource_type?: string | null;
+  resource_id?: string | null;
+  product?: { id: string; name: string; sku: string } | null;
+  customer?: { id: string; customer_code: string; full_name: string } | null;
   created_at: string;
+  read_at?: string | null;
+}
+
+export interface NotificationDetail extends AppNotification {
+  details?: Record<string, any> | null;
+}
+
+export interface NotificationListResponse {
+  items: AppNotification[];
+  total: number;
+  unread_count: number;
+  page: number;
+  page_size: number;
+}
+
+export interface NotificationFilters {
+  unread_only?: boolean;
+  is_read?: boolean;
+  category?: "stock" | "sales" | "import" | "system";
+  type?: NotificationType;
+  priority?: NotificationPriority;
+  page?: number;
+  page_size?: number;
 }
 
 export interface DashboardSummary {

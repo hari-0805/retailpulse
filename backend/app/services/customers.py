@@ -6,8 +6,9 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     Customer, CustomerPurchaseSummary, CustomerActivity, CustomerActivityType,
-    CustomerSegment, CustomerStatus, Sale, SaleItem, Notification, NotificationType,
+    CustomerSegment, CustomerStatus, Sale, SaleItem, Notification, NotificationType, NotificationPriority,
 )
+from app.services.notifications import notify_roles
 
 # ---------- Segmentation thresholds ----------
 # Tunable business rules for the four-tier segmentation model. A customer's
@@ -134,12 +135,13 @@ def recalculate_purchase_summary(db: Session, customer_id: str) -> CustomerPurch
             db, customer_id, customer.company_id, CustomerActivityType.FIRST_PURCHASE,
             f"Made their first purchase (₹{total_revenue}).",
         )
-        db.add(Notification(
-            company_id=customer.company_id,
-            customer_id=customer.id,
-            type=NotificationType.CUSTOMER_FIRST_PURCHASE,
+        notify_roles(
+            db, customer.company_id, NotificationType.CUSTOMER_FIRST_PURCHASE,
+            title="First Purchase",
             message=f"{customer.full_name} ({customer.customer_code}) made their first purchase.",
-        ))
+            priority=NotificationPriority.LOW,
+            customer_id=customer.id, resource_type="Customer", resource_id=customer.id,
+        )
 
     # -- Most recent single sale large-purchase check --
     latest_sale = db.query(Sale).filter(Sale.customer_id == customer_id).order_by(
@@ -163,12 +165,13 @@ def recalculate_purchase_summary(db: Session, customer_id: str) -> CustomerPurch
             db, customer_id, customer.company_id, CustomerActivityType.SEGMENT_CHANGED,
             f"Upgraded to VIP segment (total revenue ₹{total_revenue}, {total_orders} orders).",
         )
-        db.add(Notification(
-            company_id=customer.company_id,
-            customer_id=customer.id,
-            type=NotificationType.CUSTOMER_VIP,
+        notify_roles(
+            db, customer.company_id, NotificationType.CUSTOMER_VIP,
+            title="VIP Customer",
             message=f"{customer.full_name} ({customer.customer_code}) is now a VIP customer.",
-        ))
+            priority=NotificationPriority.LOW,
+            customer_id=customer.id, resource_type="Customer", resource_id=customer.id,
+        )
     elif new_segment != previous_segment:
         log_customer_activity(
             db, customer_id, customer.company_id, CustomerActivityType.SEGMENT_CHANGED,
@@ -211,12 +214,13 @@ def scan_inactive_customers(db: Session, company_id: str) -> int:
             continue
 
         days_inactive = (datetime.utcnow() - summary.last_purchase_date).days
-        db.add(Notification(
-            company_id=company_id,
-            customer_id=customer.id,
-            type=NotificationType.CUSTOMER_INACTIVE,
+        notify_roles(
+            db, company_id, NotificationType.CUSTOMER_INACTIVE,
+            title="Inactive Customer",
             message=f"{customer.full_name} ({customer.customer_code}) hasn't purchased in {days_inactive} days.",
-        ))
+            priority=NotificationPriority.LOW,
+            customer_id=customer.id, resource_type="Customer", resource_id=customer.id,
+        )
         created += 1
 
     if created:

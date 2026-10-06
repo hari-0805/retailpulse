@@ -29,7 +29,8 @@ from app.audit import log_action
 from app.services.customers import (
     generate_customer_code, log_customer_activity, scan_inactive_customers,
 )
-from app.models.notifications import Notification, NotificationType
+from app.models.notifications import NotificationType, NotificationPriority
+from app.services.notifications import notify_roles
 
 router = APIRouter(prefix="/customers", tags=["customers"])
 
@@ -190,12 +191,13 @@ def create_customer(
         db, customer.id, company_id, CustomerActivityType.REGISTERED,
         f"Registered as a {payload.customer_type.value.title()} customer.",
     )
-    db.add(Notification(
-        company_id=company_id,
-        customer_id=customer.id,
-        type=NotificationType.CUSTOMER_REGISTERED,
+    notify_roles(
+        db, company_id, NotificationType.CUSTOMER_REGISTERED,
+        title="New Customer",
         message=f"New customer registered: {customer.full_name} ({customer.customer_code}).",
-    ))
+        priority=NotificationPriority.LOW,
+        customer_id=customer.id, resource_type="Customer", resource_id=customer.id,
+    )
     db.commit()
     db.refresh(customer)
 
@@ -661,11 +663,15 @@ def update_customer(
         _check_duplicate(db, company_id, new_email, new_phone, exclude_id=customer_id)
 
     changed_fields = []
+    before_snapshot = {}
+    after_snapshot = {}
     for field in ["first_name", "last_name", "email", "phone", "date_of_birth", "gender", "address",
                   "city", "state", "country", "postal_code", "customer_type", "preferred_channel"]:
         value = getattr(payload, field)
         if value is not None and getattr(customer, field) != value:
+            before_snapshot[field] = getattr(customer, field)
             setattr(customer, field, value)
+            after_snapshot[field] = value
             changed_fields.append(field)
 
     if "first_name" in changed_fields or "last_name" in changed_fields:
@@ -687,7 +693,9 @@ def update_customer(
     db.refresh(customer)
 
     log_action(db, request, "Customer Updated", company_id=company_id, user_id=current_user.id,
-               entity_name=f"{customer.customer_code} ({customer.full_name})")
+               entity_name=f"{customer.customer_code} ({customer.full_name})",
+               resource_type="Customer", resource_id=customer.id,
+               before=before_snapshot or None, after=after_snapshot or None)
     db.commit()
 
     return _get_customer_or_404(db, company_id, customer.id)

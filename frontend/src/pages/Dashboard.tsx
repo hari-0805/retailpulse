@@ -3,70 +3,14 @@ import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { getDashboardSummary } from "../api/dashboard";
 import { getSalesSummary } from "../api/sales";
-import { listNotifications, markNotificationRead } from "../api/notifications";
-import type { DashboardSummary, SalesDashboardSummary, AppNotification } from "../types";
+import type { DashboardSummary, SalesDashboardSummary } from "../types";
 
 function SummaryCard({ label, value, accent }: { label: string; value: string | number; accent: string }) {
   return (
-    <div className="rounded-lg bg-white p-5 shadow-sm">
-      <p className="text-sm text-slate-500">{label}</p>
-      <p className={`mt-1 text-3xl font-bold ${accent}`}>{value}</p>
-    </div>
-  );
-}
-
-function NotificationBell({ notifications, onMarkRead }: {
-  notifications: AppNotification[];
-  onMarkRead: (id: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const unreadCount = notifications.filter((n) => !n.is_read).length;
-
-  return (
-    <div className="relative">
-      <button
-        className="relative rounded-md border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50"
-        onClick={() => setOpen((o) => !o)}
-      >
-        🔔 Alerts
-        {unreadCount > 0 && (
-          <span className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-xs font-bold text-white">
-            {unreadCount}
-          </span>
-        )}
-      </button>
-      {open && (
-        <div className="absolute right-0 z-40 mt-2 w-80 rounded-lg border border-slate-200 bg-white shadow-lg">
-          <div className="max-h-96 overflow-y-auto p-2">
-            {notifications.length === 0 && (
-              <p className="p-3 text-sm text-slate-400">No stock alerts.</p>
-            )}
-            {notifications.map((n) => (
-              <div
-                key={n.id}
-                className={`mb-1 rounded-md p-3 text-sm ${n.is_read ? "bg-white" : "bg-amber-50"}`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <span className={n.type === "OUT_OF_STOCK" ? "text-red-700" : "text-amber-700"}>
-                    {n.message}
-                  </span>
-                  {!n.is_read && (
-                    <button
-                      className="shrink-0 text-xs text-brand-500 hover:underline"
-                      onClick={() => onMarkRead(n.id)}
-                    >
-                      Mark read
-                    </button>
-                  )}
-                </div>
-                <span className="mt-1 block text-xs text-slate-400">
-                  {new Date(n.created_at).toLocaleString()}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+    <div className="group relative overflow-hidden rounded-xl border border-slate-200/70 bg-white p-5 shadow-sm transition-shadow hover:shadow-md">
+      <div className={`absolute inset-x-0 top-0 h-1 rounded-t-xl bg-current opacity-70 ${accent}`} />
+      <p className="text-sm font-medium text-slate-500">{label}</p>
+      <p className={`mt-2 text-3xl font-bold tracking-tight ${accent}`}>{value}</p>
     </div>
   );
 }
@@ -76,7 +20,6 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [salesSummary, setSalesSummary] = useState<SalesDashboardSummary | null>(null);
-  const [notifications, setNotifications] = useState<AppNotification[]>([]);
 
   const isAdmin = user?.role === "COMPANY_ADMIN" || user?.role === "SUPER_ADMIN";
   const isSalesUser = isAdmin || user?.role === "ANALYST";
@@ -87,7 +30,6 @@ export default function Dashboard() {
     }
     if (isSalesUser) {
       getSalesSummary().then(setSalesSummary).catch(() => setSalesSummary(null));
-      listNotifications().then(setNotifications).catch(() => setNotifications([]));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -97,22 +39,22 @@ export default function Dashboard() {
     navigate("/login");
   };
 
-  const handleMarkRead = async (id: string) => {
-    await markNotificationRead(id);
-    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)));
-  };
-
   return (
-    <div className="p-6">
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-slate-900">Welcome, {user?.name}</h1>
+    <div className="mx-auto w-full max-w-7xl p-4 sm:p-6">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-navy">Welcome, {user?.name}</h1>
+          <p className="text-sm text-slate-500">Here's what's happening with your store today.</p>
+        </div>
         <div className="flex items-center gap-3">
-          {isSalesUser && <NotificationBell notifications={notifications} onMarkRead={handleMarkRead} />}
           <button className="btn-outline" onClick={handleLogout}>Logout</button>
         </div>
       </div>
 
-      <div className="mb-6 rounded-lg bg-white p-6 shadow-sm">
+      <div className="mb-6 flex items-center gap-4 rounded-xl border border-brand-100 bg-gradient-to-r from-brand-50 to-white p-6 shadow-sm">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-brand-500 text-lg font-bold text-white">
+          {user?.company.name?.[0]?.toUpperCase() ?? "?"}
+        </div>
         <p className="text-slate-800">
           You're signed in to <span className="font-semibold">{user?.company.name}</span> as{" "}
           <span className="font-semibold">{user?.role.replace("_", " ")}</span>.

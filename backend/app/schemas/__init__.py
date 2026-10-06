@@ -14,6 +14,7 @@ from app.schemas.sales import (
 )
 from app.schemas.notifications import (
     NotificationProductRef, NotificationCustomerRef, NotificationOut,
+    NotificationListResponse, UnreadCountResponse, MarkAllReadResponse,
 )
 from app.schemas.inventory import (
     InventoryProductOut, InventoryOut, InventoryListResponse, ReorderLevelUpdate,
@@ -47,6 +48,7 @@ __all__ = [
     "SaleCreate", "SaleUpdate", "SaleCreatorRef", "SaleOut",
     "SaleListItem", "SaleListResponse", "SalesDashboardSummary",
     "NotificationProductRef", "NotificationCustomerRef", "NotificationOut",
+    "NotificationListResponse", "UnreadCountResponse", "MarkAllReadResponse",
     "InventoryProductOut", "InventoryOut", "InventoryListResponse", "ReorderLevelUpdate",
     "StockAdjustmentCreate", "MovementPerformerOut", "MovementOut", "MovementListResponse",
     "CategoryBreakdown", "StatusBreakdown", "InventoryDashboardSummary",

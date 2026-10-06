@@ -8,8 +8,9 @@ from app.database import get_db
 from app.models import (
     Inventory, InventoryMovement, Product, Category, User, UserRole,
     StockStatus, AdjustmentType, AdjustmentDirection, MovementType,
-    Notification, NotificationType,
+    NotificationType, NotificationPriority,
 )
+from app.services.notifications import notify_roles, evaluate_product_stock_alert
 from app.schemas import (
     InventoryOut, InventoryProductOut, InventoryListResponse, ReorderLevelUpdate,
     StockAdjustmentCreate, MovementOut, MovementPerformerOut, MovementListResponse,
@@ -84,19 +85,8 @@ def _get_inventory_or_404(db: Session, company_id: str, inventory_id: str) -> In
 
 
 def _notify_status_change(db: Session, company_id: str, inventory: Inventory, previous_status: StockStatus):
-    product = inventory.product
-    if inventory.stock_status == StockStatus.OUT_OF_STOCK and previous_status != StockStatus.OUT_OF_STOCK:
-        db.add(Notification(
-            company_id=company_id, product_id=product.id,
-            type=NotificationType.OUT_OF_STOCK,
-            message=f'"{product.name}" is now Out of Stock.',
-        ))
-    elif inventory.stock_status == StockStatus.LOW_STOCK and previous_status == StockStatus.IN_STOCK:
-        db.add(Notification(
-            company_id=company_id, product_id=product.id,
-            type=NotificationType.LOW_STOCK,
-            message=f'"{product.name}" has reached Low Stock ({inventory.available_stock} left).',
-        ))
+    if inventory.stock_status != previous_status:
+        evaluate_product_stock_alert(db, company_id, inventory, inventory.product)
 
 
 # ---------- Static routes (must be declared before /{inventory_id}) ----------
@@ -303,11 +293,13 @@ def adjust_stock(
 
     is_manual = movement_type == MovementType.MANUAL_ADJUSTMENT
     if is_manual:
-        db.add(Notification(
-            company_id=company_id, product_id=product.id,
-            type=NotificationType.STOCK_ADJUSTED,
+        notify_roles(
+            db, company_id, NotificationType.MANUAL_ADJUSTMENT,
+            title="Manual Stock Adjustment",
             message=f'Stock for "{product.name}" was manually adjusted ({delta:+d}).',
-        ))
+            priority=NotificationPriority.LOW,
+            product_id=product.id, resource_type="Product", resource_id=product.id,
+        )
 
     db.commit()
     db.refresh(inventory)

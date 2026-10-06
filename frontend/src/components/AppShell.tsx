@@ -1,4 +1,5 @@
 import { useState } from "react";
+import NotificationCenter from "./NotificationCenter";
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import type { UserRole } from "../types";
@@ -162,6 +163,7 @@ export default function AppShell() {
           R
         </div>
         <span className="text-sm font-semibold text-navy">RetailPulse</span>
+        <div className="ml-auto"><NotificationCenter /></div>
       </div>
 
       {/* Backdrop, mobile drawer only */}
@@ -182,6 +184,9 @@ export default function AppShell() {
       </aside>
 
       <div className="flex min-h-screen min-w-0 flex-col lg:ml-60">
+        <div className="sticky top-0 z-30 hidden h-14 items-center justify-end border-b border-slate-200 bg-white/90 px-6 backdrop-blur lg:flex">
+          <NotificationCenter />
+        </div>
         <main className="min-w-0 flex-1 overflow-x-hidden">
           <Outlet />
         </main>

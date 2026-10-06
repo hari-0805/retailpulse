@@ -74,6 +74,41 @@ def list_audit_logs(
     return rows, total
 
 
+def count_audit_logs(
+    db: Session, company_id: str,
+    user_id: Optional[str] = None, action: Optional[str] = None, resource_type: Optional[str] = None,
+    status: Optional[AuditStatus] = None, date_from: Optional[date] = None, date_to: Optional[date] = None,
+    search: Optional[str] = None,
+) -> int:
+    return _base_query(db, company_id, user_id, action, resource_type, status, date_from, date_to, search).count()
+
+
+def iter_audit_logs_for_export(
+    db: Session, company_id: str,
+    user_id: Optional[str] = None, action: Optional[str] = None, resource_type: Optional[str] = None,
+    status: Optional[AuditStatus] = None, date_from: Optional[date] = None, date_to: Optional[date] = None,
+    search: Optional[str] = None, sort_dir: str = "desc",
+    chunk_size: int = 1000,
+):
+    """
+    Yields matching rows in fixed-size chunks instead of the caller loading
+    every matching row into one Python list at once (the previous approach
+    used page_size=100_000, which for a company with a very large audit
+    history would mean one massive result set materialized in memory for
+    a single request). `yield_per` + `stream_results` streams results from
+    the DB cursor in batches rather than buffering the whole query result,
+    and the caller (the export endpoint) writes each row to the output
+    stream as it arrives rather than waiting for the full set.
+    """
+    query = (
+        _base_query(db, company_id, user_id, action, resource_type, status, date_from, date_to, search)
+        .order_by(asc(AuditLog.timestamp) if sort_dir == "asc" else desc(AuditLog.timestamp))
+        .execution_options(yield_per=chunk_size, stream_results=True)
+    )
+    for row in query:
+        yield row
+
+
 def get_audit_log(db: Session, company_id: str, log_id: str) -> Optional[AuditLog]:
     # company_id is part of the WHERE clause itself (not checked after the
     # fact), so a request for another company's log id simply matches

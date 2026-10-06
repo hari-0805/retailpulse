@@ -10,9 +10,10 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.models import (
     Sale, SaleItem, Product, ProductStatus, User, UserRole,
-    SalesChannel, PaymentMethod, PaymentStatus, Notification, NotificationType, Customer,
+    SalesChannel, PaymentMethod, PaymentStatus, Customer,
 )
 from app.models.inventory import Inventory, InventoryMovement, MovementType, StockStatus
+from app.services.notifications import evaluate_product_stock_alert
 from app.schemas import (
     SaleCreate, SaleUpdate, SaleOut, SaleListResponse, SalesDashboardSummary,
 )
@@ -106,20 +107,7 @@ def record_sale_stock_movement(db: Session, product_id: str, company_id: str, qu
     if old_status != inventory.stock_status:
         product = db.query(Product).filter(Product.id == product_id).first()
         if product:
-            if inventory.stock_status == StockStatus.OUT_OF_STOCK:
-                db.add(Notification(
-                    company_id=company_id,
-                    product_id=product.id,
-                    type=NotificationType.OUT_OF_STOCK,
-                    message=f"{product.name} ({product.sku}) is now out of stock.",
-                ))
-            elif inventory.stock_status == StockStatus.LOW_STOCK and old_status == StockStatus.IN_STOCK:
-                db.add(Notification(
-                    company_id=company_id,
-                    product_id=product.id,
-                    type=NotificationType.LOW_STOCK,
-                    message=f"{product.name} ({product.sku}) is low on stock: {inventory.available_stock} {product.unit_of_measure} remaining.",
-                ))
+            evaluate_product_stock_alert(db, company_id, inventory, product)
 
 
 def _build_items(db: Session, company_id: str, items_payload, products_cache: dict):
@@ -520,6 +508,13 @@ def update_sale(
     original_customer_id = sale.customer_id
     products_cache: dict = {}
 
+    before_snapshot = {
+        "customer_id": sale.customer_id, "customer_name": sale.customer_name,
+        "sale_date": sale.sale_date, "sales_channel": sale.sales_channel,
+        "payment_method": sale.payment_method, "payment_status": sale.payment_status,
+        "notes": sale.notes, "total_amount": sale.total_amount,
+    }
+
     if payload.items is not None:
         # Revert stock for the sale's current items before re-validating
         # the new set, so editing quantities on the same product works
@@ -577,8 +572,16 @@ def update_sale(
     for cid in affected_customer_ids:
         recalculate_purchase_summary(db, cid)
 
+    after_snapshot = {
+        "customer_id": sale.customer_id, "customer_name": sale.customer_name,
+        "sale_date": sale.sale_date, "sales_channel": sale.sales_channel,
+        "payment_method": sale.payment_method, "payment_status": sale.payment_status,
+        "notes": sale.notes, "total_amount": sale.total_amount,
+    }
     log_action(db, request, "Sale Updated", company_id=company_id,
-               user_id=current_user.id, entity_name=sale.invoice_number)
+               user_id=current_user.id, entity_name=sale.invoice_number,
+               resource_type="Sale", resource_id=sale.id,
+               before=before_snapshot, after=after_snapshot)
     db.commit()
 
     return db.query(Sale).options(

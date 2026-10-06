@@ -104,16 +104,22 @@ def update_category(
         if duplicate:
             raise HTTPException(status_code=400, detail="A category with this name already exists")
 
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    update_data = payload.model_dump(exclude_unset=True)
+    before_snapshot = {field: getattr(category, field) for field in update_data}
+
+    for field, value in update_data.items():
         setattr(category, field, value)
 
     db.commit()
     db.refresh(category)
 
+    after_snapshot = {field: getattr(category, field) for field in update_data}
     product_count = db.query(func.count(Product.id)).filter(Product.category_id == category.id).scalar()
 
     log_action(db, request, "Category Updated", company_id=company_id,
-               user_id=current_user.id, entity_name=category.name)
+               user_id=current_user.id, entity_name=category.name,
+               resource_type="Category", resource_id=category.id,
+               before=before_snapshot, after=after_snapshot)
     db.commit()
 
     return _serialize(category, product_count or 0)

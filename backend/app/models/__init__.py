@@ -8,7 +8,7 @@ from app.models.sales import (
     SalesChannel, PaymentMethod, PaymentStatus, Sale, SaleItem,
 )
 from app.models.notifications import (
-    NotificationType, Notification,
+    NotificationType, NotificationPriority, Notification,
 )
 from app.models.inventory import (
     StockStatus, AdjustmentType, AdjustmentDirection, MovementType,
@@ -29,7 +29,7 @@ __all__ = [
     "UserRole", "UserStatus", "Company", "User", "RefreshToken", "AuditLog", "AuditStatus",
     "CategoryStatus", "ProductStatus", "Category", "Product",
     "SalesChannel", "PaymentMethod", "PaymentStatus", "Sale", "SaleItem",
-    "NotificationType", "Notification", "StockStatus", "AdjustmentType", "AdjustmentDirection",
+    "NotificationType", "NotificationPriority", "Notification", "StockStatus", "AdjustmentType", "AdjustmentDirection",
     "MovementType", "Inventory", "InventoryMovement",
     "CustomerType", "CustomerStatus", "CustomerGender", "CustomerSegment", "CustomerActivityType",
     "Customer", "CustomerPurchaseSummary", "CustomerActivity",

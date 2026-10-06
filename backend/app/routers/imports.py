@@ -11,8 +11,9 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.models import (
     User, UserRole, ImportJob, ImportError as ImportErrorRow,
-    ImportType, ImportStatus, ImportRowStatus, Notification, NotificationType,
+    ImportType, ImportStatus, ImportRowStatus, NotificationType, NotificationPriority, AuditStatus,
 )
+from app.services.notifications import notify_roles
 from app.schemas import (
     ImportUploadResponse, ImportPreviewRow, ImportRowIssue, ImportValidationSummary,
     ImportJobOut, ImportJobListResponse, ImportJobDetailOut, ImportResultOut, ImportErrorOut,
@@ -232,6 +233,16 @@ def process_import(
         job = _get_job_or_404(db, company_id, import_id)
         job.status = ImportStatus.FAILED
         job.completed_at = datetime.utcnow()
+        notify_roles(
+            db, company_id, NotificationType.IMPORT_FAILED,
+            title="Import Failed",
+            message=f"{job.import_type.value.title()} import '{job.filename}' failed and no records were changed.",
+            priority=NotificationPriority.HIGH,
+            resource_type="ImportJob", resource_id=job.id,
+        )
+        log_action(db, request, "Import Processed", company_id=company_id, user_id=current_user.id,
+                   entity_name=job.filename, resource_type="ImportJob", resource_id=job.id,
+                   status=AuditStatus.FAILED, details="Import failed with an unexpected error; no records were changed.")
         db.commit()
         raise HTTPException(
             status_code=500,
@@ -301,14 +312,19 @@ def _run_processing(db: Session, job: ImportJob, company_id: str, current_user: 
     job.completed_at = datetime.utcnow()
     job.status = ImportStatus.COMPLETED if failed == 0 and duplicate == 0 else ImportStatus.COMPLETED_WITH_ERRORS
 
-    db.add(Notification(
-        company_id=company_id,
-        type=NotificationType.DATA_IMPORT_COMPLETED,
+    if job.status == ImportStatus.COMPLETED:
+        notify_type, priority, title = NotificationType.IMPORT_COMPLETED, NotificationPriority.LOW, "Import Completed"
+    else:
+        notify_type, priority, title = NotificationType.IMPORT_COMPLETED, NotificationPriority.MEDIUM, "Import Completed With Errors"
+
+    notify_roles(
+        db, company_id, notify_type, title=title,
         message=(
             f"{job.import_type.value.title()} import '{job.filename}' finished: "
             f"{successful} added, {duplicate} duplicates, {failed} failed."
         ),
-    ))
+        priority=priority, resource_type="ImportJob", resource_id=job.id,
+    )
 
     log_action(db, request, "Import Processed", company_id=company_id, user_id=current_user.id,
                entity_name=job.filename,

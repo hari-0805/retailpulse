@@ -163,6 +163,49 @@ with engine.connect() as conn:
         "CREATE INDEX IF NOT EXISTS ix_audit_logs_company_timestamp ON audit_logs (company_id, timestamp)"
     ))
     conn.commit()
+
+    # Task 14: Notification & Alert Management. `user_id` moves
+    # notifications from company-wide broadcast rows to one row per
+    # recipient (see services/notifications.py docstring for why). Old
+    # rows predate that model and have no natural owner to backfill, so
+    # they're dropped here rather than guessed at; correctly-shaped
+    # notifications get regenerated going forward via the on-read
+    # inventory scan and the various notify_*() call sites.
+    conn.execute(text(
+        "DO $$ BEGIN "
+        "CREATE TYPE notificationpriority AS ENUM ('LOW','MEDIUM','HIGH','CRITICAL'); "
+        "EXCEPTION WHEN duplicate_object THEN null; END $$;"
+    ))
+    conn.execute(text("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE"))
+    conn.execute(text("DELETE FROM notifications WHERE user_id IS NULL"))
+    conn.execute(text("ALTER TABLE notifications ALTER COLUMN user_id SET NOT NULL"))
+    conn.execute(text("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS resource_type VARCHAR(50)"))
+    conn.execute(text("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS resource_id VARCHAR(64)"))
+    conn.execute(text(
+        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS priority notificationpriority NOT NULL DEFAULT 'LOW'"
+    ))
+    conn.execute(text("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS title VARCHAR(150) NOT NULL DEFAULT 'Notification'"))
+    conn.execute(text("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS dedupe_key VARCHAR(150)"))
+    conn.execute(text("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS read_at TIMESTAMP"))
+    for new_value in ["STOCKOUT_RISK", "OVERSTOCK", "SALES_ALERT", "IMPORT_COMPLETED", "IMPORT_FAILED", "SYSTEM_ALERT"]:
+        try:
+            conn.execute(text(f"ALTER TYPE notificationtype ADD VALUE IF NOT EXISTS '{new_value}'"))
+        except Exception:
+            pass
+    conn.commit()
+    conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_notifications_user_created ON notifications (user_id, created_at)"
+    ))
+    conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_notifications_dedupe ON notifications (user_id, dedupe_key, is_read)"
+    ))
+    conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_notifications_priority ON notifications (priority)"
+    ))
+    conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_notifications_type ON notifications (type)"
+    ))
+    conn.commit()
 with SessionLocal() as db:
     from app.models import Product, Inventory
     from app.services.inventory_utils import compute_stock_status

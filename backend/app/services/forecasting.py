@@ -8,8 +8,9 @@ from sqlalchemy.orm import Session
 from app.models import (
     Sale, SaleItem, Product, ProductStatus, Category, Inventory,
     DemandForecast, ForecastHistory, ForecastPeriod, RecommendationType, StockRisk,
-    Notification, NotificationType,
+    NotificationType, NotificationPriority,
 )
+from app.services.notifications import notify_roles, evaluate_stockout_risk
 
 PERIOD_DAYS = {
     ForecastPeriod.NEXT_7_DAYS: 7,
@@ -310,23 +311,35 @@ def _forecast_one_product(
 
 def _maybe_notify(db: Session, company_id: str, product: Product, forecast: DemandForecast):
     if forecast.recommendation == RecommendationType.IMMEDIATE_RESTOCK_REQUIRED:
-        db.add(Notification(
-            company_id=company_id, product_id=product.id,
-            type=NotificationType.FORECAST_STOCK_RUNOUT,
+        notify_roles(
+            db, company_id, NotificationType.FORECAST_STOCK_RUNOUT,
+            title="Predicted Stockout",
             message=f"{product.name} is predicted to run out of stock before the forecast period ends.",
-        ))
+            priority=NotificationPriority.HIGH,
+            product_id=product.id, resource_type="Product", resource_id=product.id,
+            dedupe_key=f"forecast:{product.id}:stock_runout:{forecast.forecast_period.value}",
+        )
     if forecast.predicted_demand > (forecast.current_stock or 0):
-        db.add(Notification(
-            company_id=company_id, product_id=product.id,
-            type=NotificationType.FORECAST_DEMAND_EXCEEDS_STOCK,
+        notify_roles(
+            db, company_id, NotificationType.FORECAST_DEMAND_EXCEEDS_STOCK,
+            title="Demand Exceeds Stock",
             message=f"Forecasted demand for {product.name} ({forecast.predicted_demand}) exceeds available stock ({forecast.current_stock or 0}).",
-        ))
+            priority=NotificationPriority.MEDIUM,
+            product_id=product.id, resource_type="Product", resource_id=product.id,
+            dedupe_key=f"forecast:{product.id}:demand_exceeds_stock:{forecast.forecast_period.value}",
+        )
     if forecast.expected_growth_percentage >= GROWTH_NOTIFICATION_THRESHOLD:
-        db.add(Notification(
-            company_id=company_id, product_id=product.id,
-            type=NotificationType.FORECAST_DEMAND_GROWTH,
+        notify_roles(
+            db, company_id, NotificationType.FORECAST_DEMAND_GROWTH,
+            title="Demand Growth Detected",
             message=f"{product.name} shows {forecast.expected_growth_percentage}% demand growth in the latest forecast.",
-        ))
+            priority=NotificationPriority.LOW,
+            product_id=product.id, resource_type="Product", resource_id=product.id,
+            dedupe_key=f"forecast:{product.id}:demand_growth:{forecast.forecast_period.value}",
+        )
+    # Task 14: predictive stockout-risk alert, using the replenishment
+    # numbers this same forecast just computed.
+    evaluate_stockout_risk(db, company_id, product, forecast.days_of_stock_remaining, forecast.lead_time_days or DEFAULT_LEAD_TIME_DAYS)
 
 
 def _resolve_period_window(period: ForecastPeriod, custom_start=None, custom_end=None):

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_roles, get_current_company_id
 from app.audit import log_action
-from app.models import User, UserRole, AuditStatus
+from app.models import User, UserRole, AuditStatus, AuditLog
 from app.schemas import AuditLogRow, AuditLogDetail, AuditLogListResponse, AuditLogFilterOptions
 from app.services import audit_logs as audit_service
 
@@ -74,34 +74,47 @@ def export_audit_logs(
     company_id: str = Depends(get_current_company_id),
     current_user: User = Depends(require_roles(ADMIN_ONLY)),
 ):
-    # No page/page_size here on purpose — export respects every filter
-    # above but always covers the FULL matching set, not just one page.
-    rows, _total = audit_service.list_audit_logs(
-        db, company_id, user_id=user_id, action=action, resource_type=resource_type,
+    filter_kwargs = dict(
+        user_id=user_id, action=action, resource_type=resource_type,
         status=status_filter, date_from=date_from, date_to=date_to, search=search,
-        sort_dir=sort_dir, page=1, page_size=100_000,
     )
+    total = audit_service.count_audit_logs(db, company_id, **filter_kwargs)
 
     log_action(db, request, "Audit Logs Exported", company_id=company_id, user_id=current_user.id,
-               resource_type="AuditLog", status=AuditStatus.SUCCESS, details=f"format={format}, count={len(rows)}")
+               resource_type="AuditLog", status=AuditStatus.SUCCESS, details=f"format={format}, count={total}")
     db.commit()
 
     headers = ["Timestamp", "User", "Action", "Resource Type", "Resource ID", "Description", "IP Address", "Status"]
-    data_rows = [[
-        r.timestamp.isoformat(), r.user.name if r.user else "System", r.action,
-        r.resource_type or "", r.resource_id or "", r.details or "", r.ip_address or "", r.status.value,
-    ] for r in rows]
+
+    def _row_values(r):
+        return [
+            r.timestamp.isoformat(), r.user.name if r.user else "System", r.action,
+            r.resource_type or "", r.resource_id or "", r.details or "", r.ip_address or "", r.status.value,
+        ]
 
     if format == "csv":
-        buffer = io.StringIO()
-        writer = csv.writer(buffer)
-        writer.writerow(headers)
-        writer.writerows(data_rows)
-        buffer.seek(0)
+        def generate_csv():
+            class _Echo:
+                def write(self, value):
+                    return value
+            writer = csv.writer(_Echo())
+            yield writer.writerow(headers)
+            for row in audit_service.iter_audit_logs_for_export(db, company_id, sort_dir=sort_dir, **filter_kwargs):
+                yield writer.writerow(_row_values(row))
+
         return StreamingResponse(
-            iter([buffer.getvalue()]), media_type="text/csv",
+            generate_csv(), media_type="text/csv",
             headers={"Content-Disposition": "attachment; filename=audit_logs.csv"},
         )
+
+    PDF_ROW_LIMIT = 5_000
+    if total > PDF_ROW_LIMIT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"PDF export supports up to {PDF_ROW_LIMIT:,} rows; this filter matches {total:,}. "
+                    "Narrow the date range/filters, or use CSV export for the full set.",
+        )
+    data_rows = [_row_values(r) for r in audit_service.iter_audit_logs_for_export(db, company_id, sort_dir=sort_dir, **filter_kwargs)]
 
     try:
         from reportlab.lib.pagesizes import A4, landscape
@@ -141,16 +154,29 @@ def clear_audit_logs(
 ):
     """
     Admin-only, irreversible. The frontend requires a typed/explicit
-    confirmation before ever calling this (see DataImport-style confirm
-    dialogs elsewhere in the app for the pattern). Deletes only this
-    company's logs, then records the clearing itself as the sole
-    remaining entry — so there's always a trace of who wiped the log.
+    confirmation before ever calling this.
+
+    Ordering guarantee: the DELETE runs and fully executes against the
+    database FIRST, against whatever rows exist at that instant. Only
+    AFTER that does the "Cleared" entry get created — a brand-new row
+    that did not exist when the DELETE ran, so it cannot be one of the
+    rows removed. Both the delete and the new row are then committed
+    together: if anything raises before that commit, the whole thing
+    rolls back, including the delete — the trail is never left partially
+    wiped with no record of who did it.
     """
-    deleted_count = audit_service.clear_audit_logs(db, company_id)
-    log_action(db, request, "Audit Logs Cleared", company_id=company_id, user_id=current_user.id,
-               resource_type="AuditLog", status=AuditStatus.SUCCESS, details=f"{deleted_count} records cleared")
-    db.commit()
-    return {"deleted_count": deleted_count}
+    try:
+        deleted_count = audit_service.clear_audit_logs(db, company_id)
+        entry = log_action(db, request, "Audit Logs Cleared", company_id=company_id, user_id=current_user.id,
+                            resource_type="AuditLog", status=AuditStatus.SUCCESS,
+                            details=f"{deleted_count} records cleared")
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to clear audit logs. No records were changed.")
+
+    remaining = db.query(AuditLog).filter(AuditLog.company_id == company_id).count()
+    return {"deleted_count": deleted_count, "remaining_count": remaining, "cleared_by_entry_id": entry.id}
 
 
 @router.get("/{log_id}", response_model=AuditLogDetail)
