@@ -77,6 +77,7 @@ export interface Product {
   name: string;
   sku: string;
   brand?: string | null;
+  supplier?: string | null;
   description?: string | null;
   unit_price: number;
   cost_price: number;
@@ -93,6 +94,7 @@ export interface ProductPayload {
   sku: string;
   category_id: string;
   brand?: string;
+  supplier?: string;
   description?: string;
   unit_price: number;
   cost_price: number;
@@ -929,4 +931,118 @@ export interface AuditLogFilters {
   sort_dir?: "asc" | "desc";
   page?: number;
   page_size?: number;
+}
+
+// ---------- Reports (Task 15) ----------
+
+export type ReportType = "SALES" | "INVENTORY" | "CUSTOMER" | "PRODUCT_PERFORMANCE" | "STOCK_MOVEMENT";
+export type ReportFormat = "CSV" | "PDF" | "NONE";
+export type ReportStatus = "PENDING" | "COMPLETED" | "FAILED";
+export type ScheduleFrequency = "DAILY" | "WEEKLY" | "MONTHLY";
+
+export interface ReportFilters {
+  date_from?: string;
+  date_to?: string;
+  product_id?: string;
+  category_id?: string;
+  brand?: string;
+  customer_id?: string;
+  sales_status?: string;
+  stock_status?: string;
+  movement_type?: string;
+  search?: string;
+}
+
+export interface ReportColumn {
+  key: string;
+  label: string;
+}
+
+export interface ReportGenerateRequest {
+  report_type: ReportType;
+  filters: ReportFilters;
+  sort_by?: string;
+  sort_dir?: "asc" | "desc";
+  page?: number;
+  page_size?: number;
+}
+
+export interface ReportGenerateResponse {
+  report_id: string;
+  report_type: ReportType;
+  name: string;
+  columns: ReportColumn[];
+  rows: Record<string, string | number>[];
+  total: number;
+  page: number;
+  page_size: number;
+  filters: ReportFilters;
+  period_start?: string | null;
+  period_end?: string | null;
+  generated_at: string;
+}
+
+export interface ReportHistoryRow {
+  id: string;
+  report_type: ReportType;
+  name: string;
+  generated_by_name?: string | null;
+  filters: ReportFilters;
+  format: ReportFormat;
+  status: ReportStatus;
+  error_message?: string | null;
+  row_count?: number | null;
+  schedule_id?: string | null;
+  created_at: string;
+  completed_at?: string | null;
+}
+
+export interface ReportHistoryListResponse {
+  items: ReportHistoryRow[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface ReportFilterOptions {
+  categories: { id: string; name: string }[];
+  brands: string[];
+  customers: { id: string; name: string }[];
+}
+
+export interface ReportSchedule {
+  id: string;
+  name: string;
+  report_type: ReportType;
+  filters: ReportFilters;
+  format: ReportFormat;
+  frequency: ScheduleFrequency;
+  execution_time: string;
+  day_of_week?: number | null;
+  day_of_month?: number | null;
+  recipients: string[];
+  is_active: boolean;
+  created_by_name?: string | null;
+  last_run_at?: string | null;
+  last_run_status?: ReportStatus | null;
+  next_run_at?: string | null;
+  created_at: string;
+}
+
+export interface ReportScheduleListResponse {
+  items: ReportSchedule[];
+  total: number;
+}
+
+export interface ReportScheduleCreate {
+  name: string;
+  report_type: ReportType;
+  filters: ReportFilters;
+  format: ReportFormat;
+  frequency: ScheduleFrequency;
+  execution_time: string;
+  day_of_week?: number;
+  day_of_month?: number;
+  recipients: string[];
+  is_active?: boolean;
 }

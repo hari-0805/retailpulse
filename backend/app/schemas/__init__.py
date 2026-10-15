@@ -83,3 +83,15 @@ from app.schemas.audit_logs import (
 __all__ += [
     "AuditLogRow", "AuditLogDetail", "AuditLogListResponse", "AuditLogFilterOptions",
 ]
+
+from app.schemas.reports import (
+    ReportFilters, ReportGenerateRequest, ReportColumn, ReportGenerateResponse,
+    ReportHistoryRow, ReportHistoryListResponse, ReportFilterOptions,
+    ReportScheduleCreate, ReportScheduleUpdate, ReportScheduleOut, ReportScheduleListResponse,
+)
+
+__all__ += [
+    "ReportFilters", "ReportGenerateRequest", "ReportColumn", "ReportGenerateResponse",
+    "ReportHistoryRow", "ReportHistoryListResponse", "ReportFilterOptions",
+    "ReportScheduleCreate", "ReportScheduleUpdate", "ReportScheduleOut", "ReportScheduleListResponse",
+]

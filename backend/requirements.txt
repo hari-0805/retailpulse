@@ -13,3 +13,4 @@ alembic==1.13.2
 reportlab==4.2.5
 pytest
 httpx
+apscheduler==3.10.4

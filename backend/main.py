@@ -4,7 +4,7 @@ from sqlalchemy import text
 
 from app.database import Base, engine, SessionLocal
 from app.config import settings
-from app.routers import auth, categories, products, dashboard, sales, notifications, inventory, analytics, customers, forecasting, inventory_forecast, imports as data_imports, audit_logs
+from app.routers import auth, categories, products, dashboard, sales, notifications, inventory, analytics, customers, forecasting, inventory_forecast, imports as data_imports, audit_logs, reports, report_schedules
 
 # Creates tables that don't exist yet (including `sales`, `sale_items`,
 # `notifications` from Task 3, and `customers`, `customer_purchase_summary`,
@@ -28,6 +28,13 @@ with engine.connect() as conn:
     ))
     conn.execute(text(
         "ALTER TABLE products ADD COLUMN IF NOT EXISTS is_out_of_stock BOOLEAN NOT NULL DEFAULT FALSE"
+    ))
+    conn.execute(text(
+        # Bug fix: routers/inventory_forecast.py already filtered on
+        # Product.supplier (and the serializer already read it), but the
+        # column never existed — using the Supplier filter on the
+        # Inventory Forecast page crashed with AttributeError.
+        "ALTER TABLE products ADD COLUMN IF NOT EXISTS supplier VARCHAR(255)"
     ))
     # Add MANUAL_ADJUSTMENT notification type to enum in DB if not already present
     try:
@@ -256,6 +263,51 @@ app.include_router(forecasting.router)
 app.include_router(inventory_forecast.router)
 app.include_router(data_imports.router)
 app.include_router(audit_logs.router)
+app.include_router(reports.router)
+app.include_router(report_schedules.router)
+
+
+# ---------------------------------------------------------------------
+# Task 15: scheduled report execution.
+#
+# This project has no Celery/Redis, so a full distributed task queue
+# would be disproportionate infrastructure for "check once a minute
+# whether any report schedule is due." APScheduler's BackgroundScheduler
+# runs an in-process job on its own thread instead — the same philosophy
+# as this app's existing "evaluate on read" patterns (inventory alerts,
+# inactive-customer scanning), just on a timer instead of a request.
+#
+# Caveat worth knowing: this only works correctly with a single backend
+# process/worker. Running multiple uvicorn workers would mean multiple
+# schedulers all picking up the same due schedules independently. If this
+# app is ever deployed with >1 worker, this needs either a DB-level lock
+# around run_due_schedules, or moving to a real job queue.
+# ---------------------------------------------------------------------
+from apscheduler.schedulers.background import BackgroundScheduler  # noqa: E402
+from app.services.report_schedules import run_due_schedules  # noqa: E402
+
+_scheduler = BackgroundScheduler(timezone="UTC")
+
+
+def _run_due_schedules_job():
+    db = SessionLocal()
+    try:
+        run_due_schedules(db)
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
+@app.on_event("startup")
+def _start_scheduler():
+    _scheduler.add_job(_run_due_schedules_job, "interval", minutes=1, id="report_schedules", replace_existing=True)
+    _scheduler.start()
+
+
+@app.on_event("shutdown")
+def _stop_scheduler():
+    _scheduler.shutdown(wait=False)
 
 
 @app.get("/health")
