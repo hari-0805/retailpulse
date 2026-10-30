@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile, File, Form, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 
@@ -14,6 +14,7 @@ from app.models import (
     ImportType, ImportStatus, ImportRowStatus, NotificationType, NotificationPriority, AuditStatus,
 )
 from app.services.notifications import notify_roles
+from app.services import data_quality as dq
 from app.schemas import (
     ImportUploadResponse, ImportPreviewRow, ImportRowIssue, ImportValidationSummary,
     ImportJobOut, ImportJobListResponse, ImportJobDetailOut, ImportResultOut, ImportErrorOut,
@@ -215,6 +216,7 @@ def revalidate_import(
 def process_import(
     import_id: str,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     company_id: str = Depends(get_current_company_id),
     current_user: User = Depends(require_roles(ADMIN_ONLY)),
@@ -248,6 +250,18 @@ def process_import(
             status_code=500,
             detail="The import could not be processed due to an unexpected error. No records were changed.",
         )
+
+    # Task 16: a bulk import changes many records at once, so it earns a real
+    # (history-recorded) reconciliation — limited to the checks relevant to
+    # what was imported, and run in the background so the response isn't delayed.
+    try:
+        run, created = dq.start_run(
+            db, company_id, current_user.id, "IMPORT", dq.IMPORT_CHECKS.get(job.import_type.value)
+        )
+        if created:
+            background_tasks.add_task(dq.execute_run_in_background, run.id)
+    except Exception:  # never let a data-quality problem fail a finished import
+        db.rollback()
     return result
 
 

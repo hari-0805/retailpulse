@@ -11,6 +11,7 @@ from app.models import (
     NotificationType, NotificationPriority,
 )
 from app.services.notifications import notify_roles, evaluate_product_stock_alert
+from app.services import data_quality as dq
 from app.schemas import (
     InventoryOut, InventoryProductOut, InventoryListResponse, ReorderLevelUpdate,
     StockAdjustmentCreate, MovementOut, MovementPerformerOut, MovementListResponse,
@@ -317,7 +318,11 @@ def adjust_stock(
         resource_type="Product", resource_id=product.id,
         before={"stock_quantity": new_current - delta}, after={"stock_quantity": new_current},
     )
+    product_id_for_check = product.id
     db.commit()
+
+    # Task 16: re-check just this product's stock records.
+    dq.auto_check(db, company_id, dq.STOCK_WORKFLOW_CHECKS, product_ids={product_id_for_check})
 
     return _serialize_inventory(inventory)
 

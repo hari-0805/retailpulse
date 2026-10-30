@@ -14,6 +14,7 @@ from app.models import (
 )
 from app.models.inventory import Inventory, InventoryMovement, MovementType, StockStatus
 from app.services.notifications import evaluate_product_stock_alert
+from app.services import data_quality as dq
 from app.schemas import (
     SaleCreate, SaleUpdate, SaleOut, SaleListResponse, SalesDashboardSummary,
 )
@@ -313,6 +314,9 @@ def create_sale(
         raise HTTPException(status_code=409, detail="Invoice number collision, please retry")
 
     db.refresh(sale)
+    dq_sale_id = sale.id
+    dq_product_ids = {item.product_id for item in sale_items}
+    dq_customer_ids = {customer.id} if customer else set()
 
     if customer:
         recalculate_purchase_summary(db, customer.id)
@@ -321,6 +325,11 @@ def create_sale(
     log_action(db, request, "Sale Created", company_id=company_id, user_id=current_user.id,
                entity_name=f"{invoice_number} ({', '.join(product_names)})")
     db.commit()
+
+    # Task 16: cheap automatic data-quality check — only this sale and the
+    # products it touched, never the whole database.
+    dq.auto_check(db, company_id, dq.SALE_WORKFLOW_CHECKS, product_ids=dq_product_ids,
+                  sale_ids={dq_sale_id}, customer_ids=dq_customer_ids)
 
     return db.query(Sale).options(
         joinedload(Sale.items).joinedload(SaleItem.product),
@@ -506,6 +515,7 @@ def update_sale(
         raise HTTPException(status_code=404, detail="Sale not found")
 
     original_customer_id = sale.customer_id
+    original_product_ids = {i.product_id for i in sale.items}
     products_cache: dict = {}
 
     before_snapshot = {
@@ -584,6 +594,12 @@ def update_sale(
                before=before_snapshot, after=after_snapshot)
     db.commit()
 
+    dq.auto_check(
+        db, company_id, dq.SALE_WORKFLOW_CHECKS,
+        product_ids=original_product_ids | {i.product_id for i in sale.items},
+        sale_ids={sale.id}, customer_ids={c for c in (original_customer_id, sale.customer_id) if c},
+    )
+
     return db.query(Sale).options(
         joinedload(Sale.items).joinedload(SaleItem.product),
         joinedload(Sale.items).joinedload(SaleItem.category),
@@ -627,5 +643,9 @@ def delete_sale(
         log_action(db, request, "Inventory Updated", company_id=company_id,
                    user_id=current_user.id, entity_name=invoice_number)
     db.commit()
+
+    # The deleted sale's own issues resolve themselves: it no longer exists to be re-detected.
+    dq.auto_check(db, company_id, dq.SALE_WORKFLOW_CHECKS, product_ids=set(products_cache),
+                  sale_ids={sale_id}, customer_ids={linked_customer_id} if linked_customer_id else set())
 
     return None

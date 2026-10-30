@@ -95,3 +95,13 @@ __all__ += [
     "ReportHistoryRow", "ReportHistoryListResponse", "ReportFilterOptions",
     "ReportScheduleCreate", "ReportScheduleUpdate", "ReportScheduleOut", "ReportScheduleListResponse",
 ]
+
+from app.schemas.data_quality import (
+    RunOut, RunListResponse, ModuleBreakdown, SummaryOut, IssueRow, IssueListResponse,
+    IssueEventOut, IssueDetail, IssueStatusUpdate, IssueFilterOptions,
+)
+
+__all__ += [
+    "RunOut", "RunListResponse", "ModuleBreakdown", "SummaryOut", "IssueRow", "IssueListResponse",
+    "IssueEventOut", "IssueDetail", "IssueStatusUpdate", "IssueFilterOptions",
+]

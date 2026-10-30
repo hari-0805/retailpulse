@@ -31,6 +31,7 @@ from app.services.customers import (
 )
 from app.models.notifications import NotificationType, NotificationPriority
 from app.services.notifications import notify_roles
+from app.services import data_quality as dq
 
 router = APIRouter(prefix="/customers", tags=["customers"])
 
@@ -204,6 +205,8 @@ def create_customer(
     log_action(db, request, "Customer Created", company_id=company_id, user_id=current_user.id,
                entity_name=f"{customer.customer_code} ({customer.full_name})")
     db.commit()
+
+    dq.auto_check(db, company_id, dq.CUSTOMER_WORKFLOW_CHECKS, customer_ids={customer.id})
 
     return _get_customer_or_404(db, company_id, customer.id)
 
@@ -698,6 +701,8 @@ def update_customer(
                before=before_snapshot or None, after=after_snapshot or None)
     db.commit()
 
+    dq.auto_check(db, company_id, dq.CUSTOMER_WORKFLOW_CHECKS, customer_ids={customer.id})
+
     return _get_customer_or_404(db, company_id, customer.id)
 
 
@@ -752,6 +757,9 @@ def delete_customer(
 
     log_action(db, request, "Customer Deleted", company_id=company_id, user_id=current_user.id, entity_name=label)
     db.commit()
+
+    # Sales still pointing at a deleted customer are flagged (as warnings).
+    dq.auto_check(db, company_id, dq.CUSTOMER_WORKFLOW_CHECKS, customer_ids={customer_id})
     return None
 
 

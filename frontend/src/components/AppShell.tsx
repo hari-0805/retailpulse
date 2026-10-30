@@ -63,6 +63,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Data",
     items: [
       { to: "/data-import", label: "Data Import", icon: <Icon d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />, roles: ADMIN_ONLY },
+      { to: "/data-quality", label: "Data Quality", icon: <Icon d="M9 12l2 2 4-4m5.6-1.6A12 12 0 0 1 12 21 12 12 0 0 1 3.4 7.4 12 12 0 0 0 12 3a12 12 0 0 0 8.6 4.4Z" />, roles: ADMIN_ANALYST },
       { to: "/scheduled-reports", label: "Scheduled Reports", icon: <Icon d="M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />, roles: ADMIN_ONLY },
       { to: "/audit-logs", label: "Audit Logs", icon: <Icon d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 7h6m-6 4h6" />, roles: ADMIN_ONLY },
     ],

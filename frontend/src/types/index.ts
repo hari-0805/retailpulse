@@ -1046,3 +1046,103 @@ export interface ReportScheduleCreate {
   recipients: string[];
   is_active?: boolean;
 }
+
+// ---------- Data Quality & Reconciliation (Task 16) ----------
+
+export type IssueSeverity = "WARNING" | "ERROR";
+export type IssueStatus = "OPEN" | "INVESTIGATING" | "RESOLVED" | "IGNORED";
+export type RunStatus = "RUNNING" | "COMPLETED" | "COMPLETED_WITH_ISSUES" | "FAILED";
+
+export interface DQRun {
+  id: string;
+  status: RunStatus;
+  trigger_type: string;
+  triggered_by_name?: string | null;
+  started_at: string;
+  completed_at?: string | null;
+  records_checked: number;
+  issues_detected: number;
+  new_issues: number;
+  issues_resolved: number;
+  failed_checks: number;
+  error_message?: string | null;
+  check_results: { code: string; label: string; status: string; found?: number; error?: string }[];
+}
+
+export interface DQRunListResponse {
+  items: DQRun[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface DQSummary {
+  records_checked: number;
+  valid_records: number;
+  records_with_warnings: number;
+  records_with_errors: number;
+  unresolved_issues: number;
+  last_reconciliation_at?: string | null;
+  last_run?: DQRun | null;
+  running_run?: DQRun | null;
+  status_counts: Record<string, number>;
+  by_module: { module: string; errors: number; warnings: number }[];
+}
+
+export interface DQIssue {
+  id: string;
+  issue_code: string;
+  issue_type: string;
+  severity: IssueSeverity;
+  module: string;
+  record_type: string;
+  record_id: string;
+  record_label?: string | null;
+  description: string;
+  detected_at: string;
+  last_detected_at: string;
+  status: IssueStatus;
+  resolved_by_name?: string | null;
+  resolved_at?: string | null;
+  resolution_note?: string | null;
+}
+
+export interface DQIssueListResponse {
+  items: DQIssue[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface DQIssueEvent {
+  id: string;
+  user_name?: string | null;
+  previous_status?: IssueStatus | null;
+  new_status: IssueStatus;
+  note?: string | null;
+  created_at: string;
+}
+
+export interface DQIssueDetail extends DQIssue {
+  context: {
+    details: Record<string, any>;
+    record: Record<string, string | number>;
+    movements: { id: string; created_at: string; movement_type: string; quantity_changed: number; previous_quantity: number; updated_quantity: number; reason?: string | null }[];
+    related_sales: { sale_id: string; invoice_number: string; sale_date: string; quantity?: number | null; total: string }[];
+    line_items: { product: string; quantity: number; unit_price: string; total: string }[];
+  };
+  events: DQIssueEvent[];
+}
+
+export interface DQIssueFilters {
+  search?: string;
+  issue_type?: string;
+  severity?: IssueSeverity;
+  module?: string;
+  status?: IssueStatus;
+  date_from?: string;
+  date_to?: string;
+  sort_dir?: "asc" | "desc";
+  page?: number;
+  page_size?: number;
+}

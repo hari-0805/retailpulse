@@ -4,7 +4,7 @@ from sqlalchemy import text
 
 from app.database import Base, engine, SessionLocal
 from app.config import settings
-from app.routers import auth, categories, products, dashboard, sales, notifications, inventory, analytics, customers, forecasting, inventory_forecast, imports as data_imports, audit_logs, reports, report_schedules
+from app.routers import auth, categories, products, dashboard, sales, notifications, inventory, analytics, customers, forecasting, inventory_forecast, imports as data_imports, audit_logs, reports, report_schedules, data_quality
 
 # Creates tables that don't exist yet (including `sales`, `sale_items`,
 # `notifications` from Task 3, and `customers`, `customer_purchase_summary`,
@@ -265,6 +265,7 @@ app.include_router(data_imports.router)
 app.include_router(audit_logs.router)
 app.include_router(reports.router)
 app.include_router(report_schedules.router)
+app.include_router(data_quality.router)
 
 
 # ---------------------------------------------------------------------

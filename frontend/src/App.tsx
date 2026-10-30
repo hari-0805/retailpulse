@@ -22,6 +22,7 @@ import InventoryForecast from "./pages/InventoryForecast";
 import DataImport from "./pages/DataImport";
 import Reports from "./pages/Reports";
 import ScheduledReports from "./pages/ScheduledReports";
+import DataQuality from "./pages/DataQuality";
 import AuditLogs from "./pages/AuditLogs";
 
 const queryClient = new QueryClient();
@@ -46,7 +47,7 @@ export default function App() {
             <Route element={<ProtectedRoute allowedRoles={["COMPANY_ADMIN", "SUPER_ADMIN"]} />}>
               <Route element={<AppShell />}>
                 <Route path="/categories" element={<Categories />} />
-                <Route path="/products" element={<Products />} />
+                 <Route path="/products" element={<Products />} />
                 <Route path="/data-import" element={<DataImport />} />
                 <Route path="/scheduled-reports" element={<ScheduledReports />} />
                 <Route path="/audit-logs" element={<AuditLogs />} />
@@ -59,6 +60,7 @@ export default function App() {
                 <Route path="/inventory" element={<Inventory />} />
                 <Route path="/analytics" element={<Analytics />} />
                 <Route path="/reports" element={<Reports />} />
+                <Route path="/data-quality" element={<DataQuality />} />
                 <Route path="/customers" element={<Customers />} />
                 <Route path="/customers/:customerId" element={<CustomerProfile />} />
                 <Route path="/customer-analytics" element={<CustomerAnalytics />} />

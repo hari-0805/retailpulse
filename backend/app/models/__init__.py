@@ -27,6 +27,9 @@ from app.models.imports import (
 from app.models.reports import (
     ReportType, ReportFormat, ReportStatus, ScheduleFrequency, Report, ReportSchedule,
 )
+from app.models.data_quality import (
+    IssueSeverity, IssueStatus, RunStatus, ReconciliationRun, DataQualityIssue, DataQualityIssueEvent,
+)
 
 __all__ = [
     "UserRole", "UserStatus", "Company", "User", "RefreshToken", "AuditLog", "AuditStatus",
@@ -39,4 +42,5 @@ __all__ = [
     "ForecastPeriod", "RecommendationType", "StockRisk", "DemandForecast", "ForecastHistory",
     "ImportType", "ImportStatus", "ImportRowStatus", "ImportJob", "ImportError",
     "ReportType", "ReportFormat", "ReportStatus", "ScheduleFrequency", "Report", "ReportSchedule",
+    "IssueSeverity", "IssueStatus", "RunStatus", "ReconciliationRun", "DataQualityIssue", "DataQualityIssueEvent",
 ]

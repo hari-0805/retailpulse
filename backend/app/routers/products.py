@@ -9,6 +9,7 @@ from app.models import Product, Category, User, UserRole, ProductStatus
 from app.schemas import ProductCreate, ProductUpdate, ProductOut, ProductListResponse, ProductOptionOut
 from app.dependencies import require_roles, get_current_company_id
 from app.audit import log_action
+from app.services import data_quality as dq
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -108,6 +109,7 @@ def create_product(
         name=payload.name,
         sku=payload.sku,
         brand=payload.brand,
+        supplier=payload.supplier,
         description=payload.description,
         unit_price=payload.unit_price,
         cost_price=payload.cost_price,
@@ -139,6 +141,8 @@ def create_product(
                after={"name": product.name, "sku": product.sku, "unit_price": str(product.unit_price),
                       "stock_quantity": product.stock_quantity, "status": product.status.value})
     db.commit()
+
+    dq.auto_check(db, company_id, dq.PRODUCT_WORKFLOW_CHECKS, product_ids={product.id})
 
     return product
 
@@ -255,6 +259,8 @@ def update_product(
                    before={"status": previous_status.value}, after={"status": product.status.value})
 
     db.commit()
+
+    dq.auto_check(db, company_id, dq.PRODUCT_WORKFLOW_CHECKS + ["PRODUCT_STOCK_DRIFT"], product_ids={product.id})
     return product
 
 
@@ -311,5 +317,7 @@ def delete_product(
                user_id=current_user.id, entity_name=product_name,
                resource_type="Product", resource_id=product_id)
     db.commit()
+
+    dq.auto_check(db, company_id, dq.PRODUCT_WORKFLOW_CHECKS, product_ids={product_id})
 
     return None
