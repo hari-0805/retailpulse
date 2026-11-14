@@ -54,15 +54,52 @@ DATE_FORMATS = [
 # Canonical display name -> normalized key used for header matching.
 REQUIRED_COLUMNS = {
     ImportType.PRODUCTS: ["Product Name", "SKU", "Category", "Unit Price", "Stock Quantity"],
+    ImportType.INVENTORY: ["Product SKU", "Stock Quantity"],
     ImportType.CUSTOMERS: ["Name", "Email", "Phone"],
     ImportType.SALES: ["Customer", "Product", "Quantity", "Unit Price", "Sale Date"],
 }
 
 OPTIONAL_COLUMNS = {
     ImportType.PRODUCTS: ["Brand", "Description", "Cost Price", "Unit of Measure"],
+    ImportType.INVENTORY: ["Reorder Level", "Remarks"],
     ImportType.CUSTOMERS: ["Address", "City", "State", "Country", "Postal Code", "Customer Type"],
     ImportType.SALES: ["Invoice Number", "Sales Channel", "Payment Method"],
 }
+
+TEMPLATES = {
+    ImportType.PRODUCTS: (
+        "products_template.csv",
+        "Product Name,SKU,Category,Unit Price,Cost Price,Stock Quantity,Brand,Unit of Measure,Description\n"
+        "Wireless Ergonomic Mouse,TECH-MOU-001,Electronics,29.99,15.00,100,Logitech,unit,Ergonomic wireless optical mouse with USB dongle\n"
+        "Mechanical Keyboard,TECH-KEY-002,Electronics,89.99,45.00,50,Keychron,unit,Mechanical RGB gaming keyboard with blue switches\n"
+    ),
+    ImportType.INVENTORY: (
+        "inventory_template.csv",
+        "Product SKU,Stock Quantity,Reorder Level,Remarks\n"
+        "TECH-MOU-001,150,20,Quarterly warehouse shipment restock\n"
+        "TECH-KEY-002,75,15,Vendor delivery restock batch B1\n"
+    ),
+    ImportType.CUSTOMERS: (
+        "customers_template.csv",
+        "Name,Email,Phone,Address,City,State,Country,Postal Code,Customer Type\n"
+        "John Doe,john.doe@example.com,+1-555-0101,123 Main St,Springfield,IL,USA,62701,RETAIL\n"
+        "Apex Enterprises,procurement@apexcorp.com,+1-555-0102,456 Industrial Blvd,Dallas,TX,USA,75201,WHOLESALE\n"
+    ),
+    ImportType.SALES: (
+        "sales_template.csv",
+        "Customer,Product,Quantity,Unit Price,Sale Date,Invoice Number,Sales Channel,Payment Method\n"
+        "John Doe,TECH-MOU-001,2,29.99,2026-08-15,INV-2026-0001,RETAIL_STORE,CREDIT_CARD\n"
+        "Apex Enterprises,TECH-KEY-002,5,89.99,2026-08-16,INV-2026-0002,ONLINE,BANK_TRANSFER\n"
+    ),
+}
+
+
+def get_template_csv(import_type: ImportType) -> tuple[str, str]:
+    """Returns (filename, csv_text) for the requested import type."""
+    return TEMPLATES.get(
+        import_type,
+        (f"{import_type.value.lower()}_template.csv", ",".join(REQUIRED_COLUMNS.get(import_type, [])) + "\n"),
+    )
 
 
 def _normalize(header: str) -> str:
@@ -93,12 +130,25 @@ def parse_csv_text(text: str) -> ParsedCSV:
     return ParsedCSV(fieldnames, rows)
 
 
+COLUMN_ALIASES: dict[str, list[str]] = {
+    "product_sku": ["sku", "productsku", "item_sku", "item_code"],
+    "stock_quantity": ["quantity", "stock", "current_stock", "current_quantity", "qty"],
+    "unit_price": ["price", "rate"],
+    "product_name": ["name", "item_name", "title"],
+}
+
+
 def missing_required_columns(import_type: ImportType, fieldnames: list[str]) -> list[str]:
     normalized_present = {_normalize(f) for f in fieldnames}
     missing = []
     for display_name in REQUIRED_COLUMNS[import_type]:
-        if _normalize(display_name) not in normalized_present:
-            missing.append(display_name)
+        norm = _normalize(display_name)
+        if norm in normalized_present:
+            continue
+        aliases = COLUMN_ALIASES.get(norm, [])
+        if any(a in normalized_present for a in aliases):
+            continue
+        missing.append(display_name)
     return missing
 
 
@@ -110,11 +160,17 @@ def header_map(fieldnames: list[str]) -> dict:
 _header_map = header_map  # internal alias used elsewhere in this module
 
 
-def _get(row: dict, header_map: dict, display_name: str) -> str:
-    original = header_map.get(_normalize(display_name))
-    if original is None:
-        return ""
-    return (row.get(original) or "").strip()
+def _get(row: dict, header_map: dict, display_name: str, aliases: Optional[list[str]] = None) -> str:
+    norm = _normalize(display_name)
+    original = header_map.get(norm)
+    if original and row.get(original) is not None:
+        return (row.get(original) or "").strip()
+    candidate_aliases = list(aliases or []) + COLUMN_ALIASES.get(norm, [])
+    for alias in candidate_aliases:
+        alias_orig = header_map.get(_normalize(alias))
+        if alias_orig and row.get(alias_orig) is not None:
+            return (row.get(alias_orig) or "").strip()
+    return ""
 
 
 def _parse_decimal(value: str) -> Optional[Decimal]:
@@ -156,9 +212,55 @@ def validate_rows(db: Session, company_id: str, import_type: ImportType, parsed:
     header_map = _header_map(parsed.fieldnames)
     if import_type == ImportType.PRODUCTS:
         return _validate_product_rows(db, company_id, parsed.rows, header_map)
+    if import_type == ImportType.INVENTORY:
+        return _validate_inventory_rows(db, company_id, parsed.rows, header_map)
     if import_type == ImportType.CUSTOMERS:
         return _validate_customer_rows(db, company_id, parsed.rows, header_map)
     return _validate_sale_rows(db, company_id, parsed.rows, header_map)
+
+
+# ---------------------------------------------------------------- INVENTORY
+
+def _validate_inventory_rows(db: Session, company_id: str, rows: list[dict], header_map: dict) -> list[RowResult]:
+    products = db.query(Product).filter(Product.company_id == company_id).all()
+    products_by_sku = {p.sku.lower(): p for p in products}
+    seen_skus: set[str] = set()
+    results = []
+
+    for i, row in enumerate(rows, start=1):
+        sku = _get(row, header_map, "Product SKU", ["SKU"])
+        qty_raw = _get(row, header_map, "Stock Quantity", ["Quantity", "Current Stock"])
+        reorder_raw = _get(row, header_map, "Reorder Level")
+
+        problems = []
+        if not sku:
+            problems.append("Product SKU is required")
+        elif sku.lower() not in products_by_sku:
+            problems.append(f"Product SKU not found in database: '{sku}'")
+
+        qty = _parse_int(qty_raw)
+        if not qty_raw:
+            problems.append("Stock Quantity is required")
+        elif qty is None or qty < 0:
+            problems.append("Stock Quantity must be a non-negative whole number")
+
+        if reorder_raw:
+            reorder = _parse_int(reorder_raw)
+            if reorder is None or reorder < 0:
+                problems.append("Reorder Level must be a non-negative whole number")
+
+        if problems:
+            results.append(RowResult(i, row, ImportRowStatus.INVALID, "; ".join(problems)))
+            continue
+
+        if sku.lower() in seen_skus:
+            results.append(RowResult(i, row, ImportRowStatus.DUPLICATE, f"Duplicate Product SKU in file: {sku}"))
+            continue
+
+        seen_skus.add(sku.lower())
+        results.append(RowResult(i, row, None))
+
+    return results
 
 
 # ---------------------------------------------------------------- PRODUCTS
@@ -348,7 +450,9 @@ def _validate_sale_rows(db: Session, company_id: str, rows: list[dict], header_m
 # (caller wraps this in a per-row SAVEPOINT and records it as FAILED).
 # =========================================================================
 
-def process_product_row(db: Session, company_id: str, row: dict, header_map: dict) -> Product:
+def process_product_row(
+    db: Session, company_id: str, row: dict, header_map: dict, duplicate_strategy: str = "SKIP"
+) -> Optional[Product]:
     name = _get(row, header_map, "Product Name")
     sku = _get(row, header_map, "SKU")
     category_name = _get(row, header_map, "Category")
@@ -370,12 +474,51 @@ def process_product_row(db: Session, company_id: str, row: dict, header_map: dic
         db.add(category)
         db.flush()
 
-    # Re-check for a race against another row/import processed since validation.
-    dup = db.query(Product.id).filter(
+    # Re-check for existing product
+    existing = db.query(Product).filter(
         Product.company_id == company_id, Product.sku.ilike(sku)
     ).first()
-    if dup:
-        raise ValueError(f"Duplicate SKU: {sku}")
+    if existing:
+        if duplicate_strategy == "SKIP":
+            return None
+        if duplicate_strategy == "REJECT":
+            raise ValueError(f"Duplicate SKU: {sku} (rejected by policy)")
+
+        # duplicate_strategy == "UPDATE"
+        existing.name = name
+        existing.category_id = category.id
+        if brand:
+            existing.brand = brand
+        if description:
+            existing.description = description
+        if unit_price is not None:
+            existing.unit_price = unit_price
+        if cost_price is not None:
+            existing.cost_price = cost_price
+        if uom:
+            existing.unit_of_measure = uom
+
+        if stock_quantity != existing.stock_quantity:
+            diff = stock_quantity - existing.stock_quantity
+            prev_qty = existing.stock_quantity
+            existing.stock_quantity = stock_quantity
+            inv = db.query(Inventory).filter(
+                Inventory.company_id == company_id, Inventory.product_id == existing.id
+            ).first()
+            if inv:
+                inv.current_stock = stock_quantity
+                inv.update_status()
+                from app.models.inventory import InventoryMovement, MovementType
+                db.add(InventoryMovement(
+                    inventory_id=inv.id,
+                    movement_type=MovementType.STOCK_ADDITION if diff >= 0 else MovementType.STOCK_REMOVAL,
+                    quantity_changed=diff,
+                    previous_quantity=prev_qty,
+                    updated_quantity=stock_quantity,
+                    reason="Product CSV Bulk Import Update",
+                    remarks=f"Stock adjusted to {stock_quantity}",
+                ))
+        return existing
 
     product = Product(
         company_id=company_id,
@@ -405,7 +548,87 @@ def process_product_row(db: Session, company_id: str, row: dict, header_map: dic
     return product
 
 
-def process_customer_row(db: Session, company_id: str, row: dict, header_map: dict, created_by: Optional[str]) -> Customer:
+def process_inventory_row(
+    db: Session, company_id: str, row: dict, header_map: dict, user_id: Optional[str] = None, duplicate_strategy: str = "SKIP"
+) -> Optional[Inventory]:
+    sku = _get(row, header_map, "Product SKU", ["SKU"])
+    new_stock = _parse_int(_get(row, header_map, "Stock Quantity", ["Quantity", "Current Stock"])) or 0
+    reorder_raw = _get(row, header_map, "Reorder Level")
+    reorder_level = _parse_int(reorder_raw) if reorder_raw else None
+    remarks = _get(row, header_map, "Remarks") or "CSV Bulk Inventory Import"
+
+    product = db.query(Product).filter(
+        Product.company_id == company_id, Product.sku.ilike(sku)
+    ).first()
+    if not product:
+        raise ValueError(f"Product SKU not found in database: {sku}")
+
+    inv = db.query(Inventory).filter(
+        Inventory.company_id == company_id, Inventory.product_id == product.id
+    ).first()
+
+    from app.models.inventory import InventoryMovement, MovementType
+
+    if inv:
+        if duplicate_strategy == "SKIP":
+            return None
+        if duplicate_strategy == "REJECT":
+            raise ValueError(f"Inventory record already exists for SKU: {sku} (rejected by policy)")
+
+        # UPDATE strategy
+        diff = new_stock - inv.current_stock
+        prev_qty = inv.current_stock
+        inv.current_stock = new_stock
+        if reorder_level is not None:
+            inv.reorder_level = reorder_level
+        inv.update_status()
+
+        product.stock_quantity = new_stock
+
+        movement_type = MovementType.STOCK_ADDITION if diff >= 0 else MovementType.STOCK_REMOVAL
+        movement = InventoryMovement(
+            inventory_id=inv.id,
+            movement_type=movement_type,
+            quantity_changed=diff,
+            previous_quantity=prev_qty,
+            updated_quantity=new_stock,
+            reason="CSV Inventory Bulk Import",
+            remarks=remarks,
+            performed_by=user_id,
+        )
+        db.add(movement)
+        return inv
+    else:
+        inv = Inventory(
+            company_id=company_id,
+            product_id=product.id,
+            current_stock=new_stock,
+            reserved_stock=0,
+            reorder_level=reorder_level if reorder_level is not None else DEFAULT_REORDER_LEVEL,
+        )
+        inv.update_status()
+        db.add(inv)
+        db.flush()
+
+        product.stock_quantity = new_stock
+
+        movement = InventoryMovement(
+            inventory_id=inv.id,
+            movement_type=MovementType.STOCK_ADDITION,
+            quantity_changed=new_stock,
+            previous_quantity=0,
+            updated_quantity=new_stock,
+            reason="Initial CSV Inventory Bulk Import",
+            remarks=remarks,
+            performed_by=user_id,
+        )
+        db.add(movement)
+        return inv
+
+
+def process_customer_row(
+    db: Session, company_id: str, row: dict, header_map: dict, created_by: Optional[str], duplicate_strategy: str = "SKIP"
+) -> Optional[Customer]:
     full_name = _get(row, header_map, "Name")
     parts = full_name.split(" ", 1)
     first_name, last_name = (parts[0], parts[1] if len(parts) > 1 else "")
@@ -422,12 +645,36 @@ def process_customer_row(db: Session, company_id: str, row: dict, header_map: di
     except ValueError:
         customer_type = CustomerType.RETAIL
 
-    dup = db.query(Customer.id).filter(
+    dup = db.query(Customer).filter(
         Customer.company_id == company_id, Customer.is_deleted.is_(False),
         (Customer.email.ilike(email)) | (Customer.phone == phone),
     ).first()
     if dup:
-        raise ValueError(f"A customer with this email or phone already exists: {email} / {phone}")
+        if duplicate_strategy == "SKIP":
+            return None
+        if duplicate_strategy == "REJECT":
+            raise ValueError(f"A customer with this email or phone already exists: {email} / {phone}")
+
+        # UPDATE strategy
+        dup.first_name = first_name
+        dup.last_name = last_name
+        dup.full_name = full_name
+        if address:
+            dup.address = address
+        if city:
+            dup.city = city
+        if state:
+            dup.state = state
+        if country:
+            dup.country = country
+        if postal_code:
+            dup.postal_code = postal_code
+        dup.customer_type = customer_type
+        log_customer_activity(
+            db, dup.id, company_id, CustomerActivityType.PROFILE_UPDATED,
+            "Customer details updated via CSV import.",
+        )
+        return dup
 
     customer = Customer(
         company_id=company_id,
@@ -457,7 +704,9 @@ def process_customer_row(db: Session, company_id: str, row: dict, header_map: di
     return customer
 
 
-def process_sale_row(db: Session, company_id: str, row: dict, header_map: dict, created_by: str) -> Sale:
+def process_sale_row(
+    db: Session, company_id: str, row: dict, header_map: dict, created_by: str, duplicate_strategy: str = "SKIP"
+) -> Optional[Sale]:
     from app.routers.sales import _generate_invoice_number, record_sale_stock_movement
 
     customer_ref = _get(row, header_map, "Customer")
@@ -501,6 +750,8 @@ def process_sale_row(db: Session, company_id: str, row: dict, header_map: dict, 
         Sale.company_id == company_id, Sale.invoice_number.ilike(invoice_number)
     ).first()
     if dup:
+        if duplicate_strategy == "SKIP":
+            return None
         raise ValueError(f"Duplicate Invoice Number: {invoice_number}")
 
     line_total = (unit_price or product.unit_price) * qty
@@ -534,3 +785,212 @@ def process_sale_row(db: Session, company_id: str, row: dict, header_map: dict, 
     record_sale_stock_movement(db, product.id, company_id, -qty, invoice_number, created_by)
 
     return sale
+
+
+# =========================================================================
+# ASYNCHRONOUS BACKGROUND EXECUTION ENGINE
+# =========================================================================
+
+def execute_import_job_background(
+    job_id: str, company_id: str, user_id: str, duplicate_strategy: str = "SKIP"
+) -> None:
+    from app.database import SessionLocal
+    from app.models import (
+        ImportJob, ImportError as ImportErrorRow, ImportRowStatus, ImportStatus,
+        NotificationType, NotificationPriority, AuditStatus,
+    )
+    from app.services.notifications import notify_roles
+    from app.audit import log_action
+    from app.services import data_quality as dq
+
+    db = SessionLocal()
+    try:
+        job = db.query(ImportJob).filter(ImportJob.id == job_id, ImportJob.company_id == company_id).first()
+        if not job:
+            return
+
+        # Check if cancelled before starting
+        if job.status == ImportStatus.CANCELLED:
+            return
+
+        job.status = ImportStatus.PROCESSING
+        job.started_at = datetime.utcnow()
+        job.duplicate_strategy = duplicate_strategy
+        job.processed_records = 0
+        job.successful_records = 0
+        job.failed_records = 0
+        job.duplicate_records = 0
+        job.skipped_records = 0
+        db.commit()
+
+        # Send start notification
+        notify_roles(
+            db, company_id, NotificationType.IMPORT_STARTED,
+            title="Import Started",
+            message=f"{job.import_type.value.title()} import '{job.filename}' has started processing ({job.total_records} records).",
+            priority=NotificationPriority.LOW,
+            resource_type="ImportJob", resource_id=job.id,
+        )
+        db.commit()
+
+        # Re-parse & validate staged CSV
+        parsed = parse_csv_text(job.raw_content)
+        results = validate_rows(db, company_id, job.import_type, parsed)
+        h_map = header_map(parsed.fieldnames)
+
+        # Clear previous error rows for this job
+        db.query(ImportErrorRow).filter(ImportErrorRow.import_job_id == job.id).delete()
+        db.commit()
+
+        successful = 0
+        failed = 0
+        duplicate = 0
+        skipped = 0
+
+        for r in results:
+            # Check for cancellation
+            db.refresh(job)
+            if job.status == ImportStatus.CANCELLED:
+                break
+
+            if r.status == ImportRowStatus.INVALID:
+                failed += 1
+                db.add(ImportErrorRow(
+                    import_job_id=job.id, row_number=r.row_number, row_status=ImportRowStatus.INVALID,
+                    row_data=json.dumps(r.data), error_message=r.message,
+                ))
+            elif r.status == ImportRowStatus.DUPLICATE:
+                duplicate += 1
+                if duplicate_strategy == "REJECT":
+                    failed += 1
+                    db.add(ImportErrorRow(
+                        import_job_id=job.id, row_number=r.row_number, row_status=ImportRowStatus.DUPLICATE,
+                        row_data=json.dumps(r.data), error_message=f"{r.message} (rejected by policy)",
+                    ))
+                elif duplicate_strategy == "UPDATE":
+                    savepoint = db.begin_nested()
+                    try:
+                        if job.import_type == ImportType.PRODUCTS:
+                            res = process_product_row(db, company_id, r.data, h_map, duplicate_strategy="UPDATE")
+                        elif job.import_type == ImportType.INVENTORY:
+                            res = process_inventory_row(db, company_id, r.data, h_map, user_id=user_id, duplicate_strategy="UPDATE")
+                        elif job.import_type == ImportType.CUSTOMERS:
+                            res = process_customer_row(db, company_id, r.data, h_map, created_by=user_id, duplicate_strategy="UPDATE")
+                        else:
+                            res = process_sale_row(db, company_id, r.data, h_map, created_by=user_id, duplicate_strategy="UPDATE")
+                        savepoint.commit()
+                        if res is not None:
+                            successful += 1
+                        else:
+                            skipped += 1
+                    except Exception as exc:
+                        savepoint.rollback()
+                        failed += 1
+                        db.add(ImportErrorRow(
+                            import_job_id=job.id, row_number=r.row_number, row_status=ImportRowStatus.FAILED,
+                            row_data=json.dumps(r.data), error_message=str(exc)[:1000],
+                        ))
+                else:  # SKIP
+                    skipped += 1
+                    db.add(ImportErrorRow(
+                        import_job_id=job.id, row_number=r.row_number, row_status=ImportRowStatus.DUPLICATE,
+                        row_data=json.dumps(r.data), error_message=f"{r.message} (skipped)",
+                    ))
+            else:
+                # VALID row
+                savepoint = db.begin_nested()
+                try:
+                    if job.import_type == ImportType.PRODUCTS:
+                        res = process_product_row(db, company_id, r.data, h_map, duplicate_strategy=duplicate_strategy)
+                    elif job.import_type == ImportType.INVENTORY:
+                        res = process_inventory_row(db, company_id, r.data, h_map, user_id=user_id, duplicate_strategy=duplicate_strategy)
+                    elif job.import_type == ImportType.CUSTOMERS:
+                        res = process_customer_row(db, company_id, r.data, h_map, created_by=user_id, duplicate_strategy=duplicate_strategy)
+                    else:
+                        res = process_sale_row(db, company_id, r.data, h_map, created_by=user_id, duplicate_strategy=duplicate_strategy)
+                        if res is not None:
+                            db.flush()
+                            recalculate_purchase_summary(db, res.customer_id)
+                    savepoint.commit()
+                    if res is not None:
+                        successful += 1
+                    else:
+                        skipped += 1
+                except Exception as exc:
+                    savepoint.rollback()
+                    failed += 1
+                    db.add(ImportErrorRow(
+                        import_job_id=job.id, row_number=r.row_number, row_status=ImportRowStatus.FAILED,
+                        row_data=json.dumps(r.data), error_message=str(exc)[:1000],
+                    ))
+
+            job.processed_records = successful + failed + skipped
+            job.successful_records = successful
+            job.failed_records = failed
+            job.duplicate_records = duplicate
+            job.skipped_records = skipped
+            db.commit()
+
+        # If cancelled during execution
+        if job.status == ImportStatus.CANCELLED:
+            job.completed_at = datetime.utcnow()
+            if job.started_at:
+                job.duration_seconds = max(0.1, (job.completed_at - job.started_at).total_seconds())
+            db.commit()
+            return
+
+        # Complete job
+        job.completed_at = datetime.utcnow()
+        if job.started_at:
+            job.duration_seconds = max(0.1, (job.completed_at - job.started_at).total_seconds())
+        job.status = ImportStatus.COMPLETED if (failed == 0 and duplicate == 0) else ImportStatus.COMPLETED_WITH_ERRORS
+
+        # Notifications
+        if job.status == ImportStatus.COMPLETED:
+            notify_type, priority, title = NotificationType.IMPORT_COMPLETED, NotificationPriority.LOW, "Import Completed"
+        else:
+            notify_type, priority, title = NotificationType.IMPORT_COMPLETED, NotificationPriority.MEDIUM, "Import Completed With Errors"
+
+        notify_roles(
+            db, company_id, notify_type, title=title,
+            message=(
+                f"{job.import_type.value.title()} import '{job.filename}' finished: "
+                f"{successful} successful, {skipped} skipped, {failed} failed in {job.duration_seconds:.1f}s."
+            ),
+            priority=priority, resource_type="ImportJob", resource_id=job.id,
+        )
+        db.commit()
+
+        # Data Quality reconciliation run
+        try:
+            checks = dq.IMPORT_CHECKS.get(job.import_type.value)
+            if checks:
+                run, created = dq.start_run(db, company_id, user_id, "IMPORT", checks)
+                if created:
+                    dq.execute_run_in_background(run.id)
+        except Exception:
+            db.rollback()
+
+    except Exception:
+        db.rollback()
+        try:
+            job = db.query(ImportJob).filter(ImportJob.id == job_id).first()
+            if job:
+                job.status = ImportStatus.FAILED
+                job.completed_at = datetime.utcnow()
+                if job.started_at:
+                    job.duration_seconds = max(0.1, (job.completed_at - job.started_at).total_seconds())
+                db.commit()
+                notify_roles(
+                    db, company_id, NotificationType.IMPORT_FAILED,
+                    title="Import Failed",
+                    message=f"{job.import_type.value.title()} import '{job.filename}' failed unexpectedly.",
+                    priority=NotificationPriority.HIGH,
+                    resource_type="ImportJob", resource_id=job.id,
+                )
+                db.commit()
+        except Exception:
+            pass
+    finally:
+        db.close()
+

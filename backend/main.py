@@ -213,6 +213,29 @@ with engine.connect() as conn:
         "CREATE INDEX IF NOT EXISTS ix_notifications_type ON notifications (type)"
     ))
     conn.commit()
+
+    # Task 17: Advanced Data Import & Bulk Processing — enums and import_jobs columns
+    try:
+        conn.execute(text("ALTER TYPE importtype ADD VALUE IF NOT EXISTS 'INVENTORY'"))
+    except Exception:
+        pass
+    for st in ["UPLOADED", "CANCELLED"]:
+        try:
+            conn.execute(text(f"ALTER TYPE importstatus ADD VALUE IF NOT EXISTS '{st}'"))
+        except Exception:
+            pass
+    try:
+        conn.execute(text("ALTER TYPE notificationtype ADD VALUE IF NOT EXISTS 'IMPORT_STARTED'"))
+    except Exception:
+        pass
+    conn.commit()
+
+    conn.execute(text("ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS duplicate_strategy VARCHAR(20) NOT NULL DEFAULT 'SKIP'"))
+    conn.execute(text("ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS processed_records INTEGER NOT NULL DEFAULT 0"))
+    conn.execute(text("ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS skipped_records INTEGER NOT NULL DEFAULT 0"))
+    conn.execute(text("ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS started_at TIMESTAMP"))
+    conn.execute(text("ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS duration_seconds DOUBLE PRECISION"))
+    conn.commit()
 with SessionLocal() as db:
     from app.models import Product, Inventory
     from app.services.inventory_utils import compute_stock_status
@@ -244,7 +267,13 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_origin],
+    allow_origins=[
+        settings.frontend_origin,
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -309,6 +338,16 @@ def _start_scheduler():
 @app.on_event("shutdown")
 def _stop_scheduler():
     _scheduler.shutdown(wait=False)
+
+
+@app.get("/")
+def root():
+    return {
+        "status": "online",
+        "message": "RetailPulse API is running successfully",
+        "docs_url": "/docs",
+        "health_check": "/health"
+    }
 
 
 @app.get("/health")

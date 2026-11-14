@@ -69,11 +69,13 @@ __all__ = [
 from app.schemas.imports import (
     ImportPreviewRow, ImportRowIssue, ImportValidationSummary, ImportUploadResponse,
     ImportJobOut, ImportJobListResponse, ImportJobDetailOut, ImportResultOut, ImportErrorOut,
+    ImportProcessRequest, ImportProgressOut,
 )
 
 __all__ += [
     "ImportPreviewRow", "ImportRowIssue", "ImportValidationSummary", "ImportUploadResponse",
     "ImportJobOut", "ImportJobListResponse", "ImportJobDetailOut", "ImportResultOut", "ImportErrorOut",
+    "ImportProcessRequest", "ImportProgressOut",
 ]
 
 from app.schemas.audit_logs import (

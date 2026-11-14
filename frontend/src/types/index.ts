@@ -810,17 +810,20 @@ export interface InventoryForecastListParams {
 }
 
 
-// ---------- Data Import (Task 12) ----------
+// ---------- Data Import (Task 17: Advanced Data Import & Bulk Processing) ----------
 
-export type ImportType = "PRODUCTS" | "CUSTOMERS" | "SALES";
+export type ImportType = "PRODUCTS" | "INVENTORY" | "CUSTOMERS" | "SALES";
 export type ImportStatus =
   | "PENDING"
+  | "UPLOADED"
   | "VALIDATED"
   | "PROCESSING"
   | "COMPLETED"
   | "COMPLETED_WITH_ERRORS"
-  | "FAILED";
+  | "FAILED"
+  | "CANCELLED";
 export type ImportRowStatus = "INVALID" | "DUPLICATE" | "FAILED";
+export type DuplicateStrategy = "SKIP" | "UPDATE" | "REJECT";
 
 export interface ImportPreviewRow {
   row_number: number;
@@ -853,6 +856,19 @@ export interface ImportUploadResponse {
   row_issues: ImportRowIssue[];
 }
 
+export interface ImportProgress {
+  id: string;
+  status: ImportStatus;
+  total_records: number;
+  processed_records: number;
+  progress_percentage: number;
+  successful_records: number;
+  failed_records: number;
+  duplicate_records: number;
+  skipped_records: number;
+  duration_seconds?: number | null;
+}
+
 export interface ImportJob {
   id: string;
   import_type: ImportType;
@@ -862,9 +878,14 @@ export interface ImportJob {
   successful_records: number;
   failed_records: number;
   duplicate_records: number;
+  skipped_records?: number;
+  processed_records?: number;
+  duplicate_strategy?: string;
   status: ImportStatus;
   created_at: string;
+  started_at?: string | null;
   completed_at?: string | null;
+  duration_seconds?: number | null;
 }
 
 export interface ImportJobListResponse {
@@ -879,6 +900,9 @@ export interface ImportResult {
   successful_records: number;
   failed_records: number;
   duplicate_records: number;
+  skipped_records?: number;
+  processed_records?: number;
+  duration_seconds?: number | null;
   completed_at?: string | null;
 }
 

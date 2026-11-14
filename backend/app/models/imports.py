@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import Column, String, DateTime, ForeignKey, Enum as SAEnum, Integer, Text
+from sqlalchemy import Column, String, DateTime, ForeignKey, Enum as SAEnum, Integer, Text, Float
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -11,17 +11,20 @@ from app.models.base import gen_uuid
 
 class ImportType(str, enum.Enum):
     PRODUCTS = "PRODUCTS"
+    INVENTORY = "INVENTORY"
     CUSTOMERS = "CUSTOMERS"
     SALES = "SALES"
 
 
 class ImportStatus(str, enum.Enum):
     PENDING = "PENDING"          # uploaded, not yet processed
+    UPLOADED = "UPLOADED"
     VALIDATED = "VALIDATED"      # column + row validation has run at least once
-    PROCESSING = "PROCESSING"    # transient, set for the duration of /process
+    PROCESSING = "PROCESSING"    # transient, set for the duration of background processing
     COMPLETED = "COMPLETED"
     COMPLETED_WITH_ERRORS = "COMPLETED_WITH_ERRORS"
     FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
 
 
 class ImportRowStatus(str, enum.Enum):
@@ -52,10 +55,15 @@ class ImportJob(Base):
     duplicate_records = Column(Integer, nullable=False, default=0)
     successful_records = Column(Integer, nullable=False, default=0)
     failed_records = Column(Integer, nullable=False, default=0)
+    skipped_records = Column(Integer, nullable=False, default=0)
+    processed_records = Column(Integer, nullable=False, default=0)
 
+    duplicate_strategy = Column(String(20), nullable=False, default="SKIP")
     status = Column(SAEnum(ImportStatus), nullable=False, default=ImportStatus.PENDING)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
+    duration_seconds = Column(Float, nullable=True)
 
     uploader = relationship("User")
     row_errors = relationship("ImportError", back_populates="job", cascade="all, delete-orphan")

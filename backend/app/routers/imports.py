@@ -18,6 +18,7 @@ from app.services import data_quality as dq
 from app.schemas import (
     ImportUploadResponse, ImportPreviewRow, ImportRowIssue, ImportValidationSummary,
     ImportJobOut, ImportJobListResponse, ImportJobDetailOut, ImportResultOut, ImportErrorOut,
+    ImportProcessRequest, ImportProgressOut,
 )
 from app.dependencies import require_roles, get_current_company_id
 from app.audit import log_action
@@ -48,9 +49,14 @@ def _job_to_out(job: ImportJob) -> ImportJobOut:
         successful_records=job.successful_records,
         failed_records=job.failed_records,
         duplicate_records=job.duplicate_records,
+        skipped_records=getattr(job, "skipped_records", 0) or 0,
+        processed_records=getattr(job, "processed_records", 0) or 0,
+        duplicate_strategy=getattr(job, "duplicate_strategy", "SKIP") or "SKIP",
         status=job.status,
         created_at=job.created_at,
+        started_at=job.started_at,
         completed_at=job.completed_at,
+        duration_seconds=job.duration_seconds,
     )
 
 
@@ -95,6 +101,23 @@ def _stage_validation(db: Session, job: ImportJob, results: list[import_service.
     return ImportValidationSummary(
         total_records=job.total_records, valid_records=valid,
         invalid_records=invalid, duplicate_records=duplicate,
+    )
+
+
+@router.get("/template/{import_type}")
+def download_template(
+    import_type: ImportType,
+    current_user: User = Depends(require_roles(ADMIN_ONLY)),
+):
+    """
+    Provides a downloadable CSV template with standard columns and sample data rows
+    for the selected import type (Products, Inventory, Customers, Sales).
+    """
+    filename, content = import_service.get_template_csv(import_type)
+    return StreamingResponse(
+        iter([content]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
@@ -150,7 +173,8 @@ async def upload_import(
     summary = _stage_validation(db, job, results)
 
     log_action(db, request, "Import Uploaded", company_id=company_id, user_id=current_user.id,
-               entity_name=file.filename, details=f"{import_type.value}, {summary.total_records} rows")
+               entity_name=file.filename, resource_type="ImportJob", resource_id=job.id,
+               details=f"{import_type.value}, {summary.total_records} rows")
     db.commit()
 
     preview_rows = [ImportPreviewRow(row_number=r.row_number, data=r.data) for r in results[:PREVIEW_ROW_LIMIT]]
@@ -217,140 +241,113 @@ def process_import(
     import_id: str,
     request: Request,
     background_tasks: BackgroundTasks,
+    duplicate_strategy: Optional[str] = Query("SKIP", description="Duplicate strategy: SKIP, UPDATE, or REJECT"),
+    body: Optional[ImportProcessRequest] = None,
     db: Session = Depends(get_db),
     company_id: str = Depends(get_current_company_id),
     current_user: User = Depends(require_roles(ADMIN_ONLY)),
 ):
+    strategy = (body.duplicate_strategy if body and body.duplicate_strategy else duplicate_strategy) or "SKIP"
+    strategy = strategy.upper()
+    if strategy not in ("SKIP", "UPDATE", "REJECT"):
+        strategy = "SKIP"
+
     job = _get_job_or_404(db, company_id, import_id)
     if job.status in (ImportStatus.COMPLETED, ImportStatus.COMPLETED_WITH_ERRORS, ImportStatus.PROCESSING):
         raise HTTPException(status_code=400, detail=f"Import is already {job.status.value.lower()}")
 
     job.status = ImportStatus.PROCESSING
-    db.commit()
-
-    try:
-        result = _run_processing(db, job, company_id, current_user, request)
-    except Exception:
-        db.rollback()
-        job = _get_job_or_404(db, company_id, import_id)
-        job.status = ImportStatus.FAILED
-        job.completed_at = datetime.utcnow()
-        notify_roles(
-            db, company_id, NotificationType.IMPORT_FAILED,
-            title="Import Failed",
-            message=f"{job.import_type.value.title()} import '{job.filename}' failed and no records were changed.",
-            priority=NotificationPriority.HIGH,
-            resource_type="ImportJob", resource_id=job.id,
-        )
-        log_action(db, request, "Import Processed", company_id=company_id, user_id=current_user.id,
-                   entity_name=job.filename, resource_type="ImportJob", resource_id=job.id,
-                   status=AuditStatus.FAILED, details="Import failed with an unexpected error; no records were changed.")
-        db.commit()
-        raise HTTPException(
-            status_code=500,
-            detail="The import could not be processed due to an unexpected error. No records were changed.",
-        )
-
-    # Task 16: a bulk import changes many records at once, so it earns a real
-    # (history-recorded) reconciliation — limited to the checks relevant to
-    # what was imported, and run in the background so the response isn't delayed.
-    try:
-        run, created = dq.start_run(
-            db, company_id, current_user.id, "IMPORT", dq.IMPORT_CHECKS.get(job.import_type.value)
-        )
-        if created:
-            background_tasks.add_task(dq.execute_run_in_background, run.id)
-    except Exception:  # never let a data-quality problem fail a finished import
-        db.rollback()
-    return result
-
-
-def _run_processing(db: Session, job: ImportJob, company_id: str, current_user: User, request: Request) -> ImportResultOut:
-    # Fresh validation immediately before processing, since data may have
-    # changed since upload/last validate (see module docstring in
-    # app/services/imports.py for the overall data-integrity strategy).
-    parsed = import_service.parse_csv_text(job.raw_content)
-    results = import_service.validate_rows(db, company_id, job.import_type, parsed)
-    header_map = import_service.header_map(parsed.fieldnames)
-
-    db.query(ImportErrorRow).filter(ImportErrorRow.import_job_id == job.id).delete()
-    db.commit()
-
-    successful = 0
-    failed = 0
-    duplicate = 0
-
-    for r in results:
-        if r.status == ImportRowStatus.INVALID:
-            failed += 1
-            db.add(ImportErrorRow(
-                import_job_id=job.id, row_number=r.row_number, row_status=ImportRowStatus.INVALID,
-                row_data=json.dumps(r.data), error_message=r.message,
-            ))
-            continue
-        if r.status == ImportRowStatus.DUPLICATE:
-            duplicate += 1
-            db.add(ImportErrorRow(
-                import_job_id=job.id, row_number=r.row_number, row_status=ImportRowStatus.DUPLICATE,
-                row_data=json.dumps(r.data), error_message=r.message,
-            ))
-            continue
-
-        # VALID row: process inside its own SAVEPOINT so one bad insert
-        # can't take out the rows around it (see module docstring).
-        savepoint = db.begin_nested()
-        try:
-            if job.import_type == ImportType.PRODUCTS:
-                import_service.process_product_row(db, company_id, r.data, header_map)
-            elif job.import_type == ImportType.CUSTOMERS:
-                import_service.process_customer_row(db, company_id, r.data, header_map, current_user.id)
-            else:
-                sale = import_service.process_sale_row(db, company_id, r.data, header_map, current_user.id)
-                db.flush()
-                recalculate_purchase_summary(db, sale.customer_id)
-            savepoint.commit()
-            successful += 1
-        except Exception as exc:  # noqa: BLE001 — row-level isolation is intentional
-            savepoint.rollback()
-            failed += 1
-            db.add(ImportErrorRow(
-                import_job_id=job.id, row_number=r.row_number, row_status=ImportRowStatus.FAILED,
-                row_data=json.dumps(r.data), error_message=str(exc)[:1000],
-            ))
-
-    job.successful_records = successful
-    job.failed_records = failed
-    job.duplicate_records = duplicate
-    job.valid_records = successful
-    job.invalid_records = failed
-    job.completed_at = datetime.utcnow()
-    job.status = ImportStatus.COMPLETED if failed == 0 and duplicate == 0 else ImportStatus.COMPLETED_WITH_ERRORS
-
-    if job.status == ImportStatus.COMPLETED:
-        notify_type, priority, title = NotificationType.IMPORT_COMPLETED, NotificationPriority.LOW, "Import Completed"
-    else:
-        notify_type, priority, title = NotificationType.IMPORT_COMPLETED, NotificationPriority.MEDIUM, "Import Completed With Errors"
-
-    notify_roles(
-        db, company_id, notify_type, title=title,
-        message=(
-            f"{job.import_type.value.title()} import '{job.filename}' finished: "
-            f"{successful} added, {duplicate} duplicates, {failed} failed."
-        ),
-        priority=priority, resource_type="ImportJob", resource_id=job.id,
-    )
-
-    log_action(db, request, "Import Processed", company_id=company_id, user_id=current_user.id,
-               entity_name=job.filename,
-               details=f"{successful} succeeded, {failed} failed, {duplicate} duplicates")
+    job.started_at = datetime.utcnow()
+    job.duplicate_strategy = strategy
+    job.processed_records = 0
+    job.successful_records = 0
+    job.failed_records = 0
+    job.duplicate_records = 0
+    job.skipped_records = 0
     db.commit()
     db.refresh(job)
 
-    return ImportResultOut(
-        id=job.id, status=job.status, total_records=job.total_records,
-        successful_records=job.successful_records, failed_records=job.failed_records,
-        duplicate_records=job.duplicate_records, completed_at=job.completed_at,
+    log_action(db, request, "Import Started", company_id=company_id, user_id=current_user.id,
+               entity_name=job.filename, resource_type="ImportJob", resource_id=job.id,
+               details=f"Strategy: {strategy}, {job.total_records} records")
+    db.commit()
+
+    background_tasks.add_task(
+        import_service.execute_import_job_background,
+        job.id,
+        company_id,
+        current_user.id,
+        strategy,
     )
+
+    return ImportResultOut(
+        id=job.id,
+        status=job.status,
+        total_records=job.total_records,
+        successful_records=job.successful_records,
+        failed_records=job.failed_records,
+        duplicate_records=job.duplicate_records,
+        skipped_records=job.skipped_records,
+        processed_records=job.processed_records,
+        duration_seconds=job.duration_seconds,
+        completed_at=job.completed_at,
+    )
+
+
+@router.get("/{import_id}/status", response_model=ImportProgressOut)
+def get_import_status(
+    import_id: str,
+    db: Session = Depends(get_db),
+    company_id: str = Depends(get_current_company_id),
+    current_user: User = Depends(require_roles(ADMIN_ONLY)),
+):
+    """
+    Returns real-time progress metrics for active or completed import jobs.
+    """
+    job = _get_job_or_404(db, company_id, import_id)
+    pct = (job.processed_records / job.total_records * 100) if job.total_records > 0 else 0.0
+    if job.status in (ImportStatus.COMPLETED, ImportStatus.COMPLETED_WITH_ERRORS, ImportStatus.FAILED, ImportStatus.CANCELLED):
+        pct = 100.0
+    return ImportProgressOut(
+        id=job.id,
+        status=job.status,
+        total_records=job.total_records,
+        processed_records=job.processed_records,
+        progress_percentage=round(pct, 1),
+        successful_records=job.successful_records,
+        failed_records=job.failed_records,
+        duplicate_records=job.duplicate_records,
+        skipped_records=job.skipped_records,
+        duration_seconds=job.duration_seconds,
+    )
+
+
+@router.post("/{import_id}/cancel", response_model=ImportJobOut)
+def cancel_import(
+    import_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    company_id: str = Depends(get_current_company_id),
+    current_user: User = Depends(require_roles(ADMIN_ONLY)),
+):
+    """
+    Cancels an active or pending import job.
+    """
+    job = _get_job_or_404(db, company_id, import_id)
+    if job.status in (ImportStatus.COMPLETED, ImportStatus.COMPLETED_WITH_ERRORS, ImportStatus.FAILED):
+        raise HTTPException(status_code=400, detail=f"Import is already {job.status.value.lower()} and cannot be cancelled")
+
+    job.status = ImportStatus.CANCELLED
+    job.completed_at = datetime.utcnow()
+    if job.started_at:
+        job.duration_seconds = max(0.1, (job.completed_at - job.started_at).total_seconds())
+
+    log_action(db, request, "Import Cancelled", company_id=company_id, user_id=current_user.id,
+               entity_name=job.filename, resource_type="ImportJob", resource_id=job.id,
+               details=f"Cancelled by user. Processed {job.processed_records}/{job.total_records}")
+    db.commit()
+    db.refresh(job)
+    return _job_to_out(job)
 
 
 @router.get("/history", response_model=ImportJobListResponse)

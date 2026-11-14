@@ -44,6 +44,25 @@ class ImportUploadResponse(BaseModel):
     row_issues: list[ImportRowIssue]
 
 
+# ---------- Process request & status ----------
+
+class ImportProcessRequest(BaseModel):
+    duplicate_strategy: str = "SKIP"  # "SKIP" | "UPDATE" | "REJECT"
+
+
+class ImportProgressOut(BaseModel):
+    id: str
+    status: ImportStatus
+    total_records: int
+    processed_records: int
+    progress_percentage: float
+    successful_records: int
+    failed_records: int
+    duplicate_records: int
+    skipped_records: int
+    duration_seconds: Optional[float] = None
+
+
 # ---------- Import history ----------
 
 class ImportJobOut(BaseModel):
@@ -55,9 +74,14 @@ class ImportJobOut(BaseModel):
     successful_records: int
     failed_records: int
     duplicate_records: int
+    skipped_records: int = 0
+    processed_records: int = 0
+    duplicate_strategy: str = "SKIP"
     status: ImportStatus
     created_at: datetime
+    started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    duration_seconds: Optional[float] = None
 
 
 class ImportJobListResponse(BaseModel):
@@ -79,6 +103,9 @@ class ImportResultOut(BaseModel):
     successful_records: int
     failed_records: int
     duplicate_records: int
+    skipped_records: int = 0
+    processed_records: int = 0
+    duration_seconds: Optional[float] = None
     completed_at: Optional[datetime] = None
 
 
@@ -87,3 +114,4 @@ class ImportErrorOut(BaseModel):
     status: ImportRowStatus
     message: str
     data: dict
+

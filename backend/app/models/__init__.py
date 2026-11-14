@@ -22,7 +22,8 @@ from app.models.forecasting import (
     ForecastPeriod, RecommendationType, StockRisk, DemandForecast, ForecastHistory,
 )
 from app.models.imports import (
-    ImportType, ImportStatus, ImportRowStatus, ImportJob, ImportError,
+    ImportType, ImportStatus, ImportRowStatus, ImportJob, ImportError, DuplicateMode,
+    TERMINAL_STATUSES as IMPORT_TERMINAL_STATUSES, ACTIVE_STATUSES as IMPORT_ACTIVE_STATUSES,
 )
 from app.models.reports import (
     ReportType, ReportFormat, ReportStatus, ScheduleFrequency, Report, ReportSchedule,
@@ -40,7 +41,8 @@ __all__ = [
     "CustomerType", "CustomerStatus", "CustomerGender", "CustomerSegment", "CustomerActivityType",
     "Customer", "CustomerPurchaseSummary", "CustomerActivity",
     "ForecastPeriod", "RecommendationType", "StockRisk", "DemandForecast", "ForecastHistory",
-    "ImportType", "ImportStatus", "ImportRowStatus", "ImportJob", "ImportError",
+    "ImportType", "ImportStatus", "ImportRowStatus", "ImportJob", "ImportError", "DuplicateMode",
+    "IMPORT_TERMINAL_STATUSES", "IMPORT_ACTIVE_STATUSES",
     "ReportType", "ReportFormat", "ReportStatus", "ScheduleFrequency", "Report", "ReportSchedule",
     "IssueSeverity", "IssueStatus", "RunStatus", "ReconciliationRun", "DataQualityIssue", "DataQualityIssueEvent",
 ]
